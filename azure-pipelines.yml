@@ -1,0 +1,44 @@
+trigger:
+  batch: true
+  branches:
+    include: [main]
+pr:
+  branches:
+    include: [main]
+
+parameters:
+- name: DeployEnvironment
+  displayName: Environment to deploy after a successful build
+  type: string
+  default: none
+  values: [none, AT, TEST, TEST2, DEMO]
+
+variables:
+- name: SolutionBaseName
+  value: SFA.DAS.Tools.Support.Jobs
+- name: BuildConfiguration
+  value: Release
+
+stages:
+- stage: Build
+  jobs:
+  - template: pipeline-templates/job/code-build.yml
+    parameters:
+      SolutionBaseName: $(SolutionBaseName)
+      BuildConfiguration: $(BuildConfiguration)
+
+- ${{ if ne(parameters.DeployEnvironment, 'none') }}:
+  - stage: Deploy
+    dependsOn: Build
+    condition: succeeded()
+    displayName: Deploy to ${{ parameters.DeployEnvironment }}
+    variables:
+    - group: DevTest Management Resources
+    - group: ${{ parameters.DeployEnvironment }} DevTest Shared Resources
+    - group: ${{ parameters.DeployEnvironment }} das-tools-support-jobs
+    jobs:
+    - template: pipeline-templates/job/deploy.yml
+      parameters:
+        Environment: ${{ parameters.DeployEnvironment }}
+        ServiceConnection: SFA-DAS-DevTest-ARM
+        SolutionBaseName: $(SolutionBaseName)

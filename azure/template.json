@@ -1,0 +1,146 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "resourceEnvironmentName": { "type": "string" },
+    "environmentName": { "type": "string" },
+    "serviceName": { "type": "string", "defaultValue": "toolssupjobs" },
+    "resourceGroupLocation": { "type": "string" },
+    "sharedEnvResourceGroup": { "type": "string" },
+    "sharedAiSearchName": { "type": "string" },
+    "subnetResourceId": { "type": "string" },
+    "workerAccessRestrictions": { "type": "array" },
+    "sharedStorageAccountConnectionString": { "type": "securestring" },
+    "applicationInsightsConnectionString": { "type": "securestring" },
+    "employerProfilesApiBaseUrl": { "type": "string" },
+    "employerProfilesApiIdentifierUri": { "type": "string" },
+    "refreshUserSearchIndexSchedule": { "type": "string", "defaultValue": "0 0 2 * * *" },
+    "appServicePlanSku": { "type": "string", "defaultValue": "S1" },
+    "tags": { "type": "object" }
+  },
+  "variables": {
+    "prefix": "[toLower(concat('das-', parameters('resourceEnvironmentName'), '-', parameters('serviceName')))]",
+    "resourceGroupName": "[concat(variables('prefix'), '-rg')]",
+    "functionAppName": "[concat(variables('prefix'), '-fa')]",
+    "appServicePlanName": "[concat(variables('prefix'), '-asp')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2021-04-01",
+      "name": "[variables('resourceGroupName')]",
+      "location": "[parameters('resourceGroupLocation')]",
+      "tags": "[parameters('tags')]",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "[concat(variables('prefix'), '-function')]",
+      "resourceGroup": "[variables('resourceGroupName')]",
+      "dependsOn": ["[variables('resourceGroupName')]"],
+      "properties": {
+        "mode": "Incremental",
+        "expressionEvaluationOptions": { "scope": "inner" },
+        "parameters": {
+          "functionAppName": { "value": "[variables('functionAppName')]" },
+          "appServicePlanName": { "value": "[variables('appServicePlanName')]" },
+          "appServicePlanSku": { "value": "[parameters('appServicePlanSku')]" },
+          "tags": { "value": "[parameters('tags')]" },
+          "subnetResourceId": { "value": "[parameters('subnetResourceId')]" },
+          "workerAccessRestrictions": { "value": "[parameters('workerAccessRestrictions')]" },
+          "appSettings": {
+            "value": { "array": [
+              { "name": "EnvironmentName", "value": "[parameters('environmentName')]" },
+              { "name": "AzureWebJobsStorage", "value": "[parameters('sharedStorageAccountConnectionString')]" },
+              { "name": "APPLICATIONINSIGHTS_CONNECTION_STRING", "value": "[parameters('applicationInsightsConnectionString')]" },
+              { "name": "FUNCTIONS_EXTENSION_VERSION", "value": "~4" },
+              { "name": "FUNCTIONS_WORKER_RUNTIME", "value": "dotnet-isolated" },
+              { "name": "WEBSITE_RUN_FROM_PACKAGE", "value": "1" },
+              { "name": "RefreshUserSearchIndexSchedule", "value": "[parameters('refreshUserSearchIndexSchedule')]" },
+              { "name": "ToolsSupportJobs__AzureSearchBaseUrl", "value": "[concat('https://', parameters('sharedAiSearchName'), '.search.windows.net')]" },
+              { "name": "ToolsSupportJobs__EmployerProfilesApiBaseUrl", "value": "[parameters('employerProfilesApiBaseUrl')]" },
+              { "name": "ToolsSupportJobs__EmployerProfilesApiIdentifierUri", "value": "[parameters('employerProfilesApiIdentifierUri')]" }
+            ] }
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "functionAppName": { "type": "string" },
+            "appServicePlanName": { "type": "string" },
+            "appServicePlanSku": { "type": "string" },
+            "tags": { "type": "object" },
+            "subnetResourceId": { "type": "string" },
+            "workerAccessRestrictions": { "type": "array" },
+            "appSettings": { "type": "secureObject" }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2024-04-01",
+              "name": "[parameters('appServicePlanName')]",
+              "location": "[resourceGroup().location]",
+              "tags": "[parameters('tags')]",
+              "sku": { "name": "[parameters('appServicePlanSku')]", "capacity": 1 },
+              "properties": { "reserved": false }
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2024-04-01",
+              "name": "[parameters('functionAppName')]",
+              "location": "[resourceGroup().location]",
+              "tags": "[parameters('tags')]",
+              "kind": "functionapp",
+              "identity": { "type": "SystemAssigned" },
+              "dependsOn": ["[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]"],
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
+                "httpsOnly": true,
+                "virtualNetworkSubnetId": "[parameters('subnetResourceId')]",
+                "siteConfig": {
+                  "netFrameworkVersion": "v10.0",
+                  "alwaysOn": true,
+                  "use32BitWorkerProcess": false,
+                  "minTlsVersion": "1.2",
+                  "ftpsState": "Disabled",
+                  "vnetRouteAllEnabled": true,
+                  "ipSecurityRestrictions": "[parameters('workerAccessRestrictions')]",
+                  "appSettings": "[parameters('appSettings').array]"
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "principalId": { "type": "string", "value": "[reference(resourceId('Microsoft.Web/sites', parameters('functionAppName')), '2024-04-01', 'Full').identity.principalId]" }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "[concat(variables('prefix'), '-search-role')]",
+      "resourceGroup": "[parameters('sharedEnvResourceGroup')]",
+      "dependsOn": ["[concat(variables('prefix'), '-function')]"],
+      "properties": {
+        "mode": "Incremental",
+        "templateLink": {
+          "uri": "https://raw.githubusercontent.com/SkillsFundingAgency/das-platform-building-blocks/3.0.17/templates/role-assignments/role-assignment-ai-search.json",
+          "contentVersion": "1.0.0.0"
+        },
+        "parameters": {
+          "principalId": { "value": "[reference(concat(variables('prefix'), '-function')).outputs.principalId.value]" },
+          "assignmentType": { "value": "AiSearchIndexContributor" },
+          "resourceName": { "value": "[parameters('sharedAiSearchName')]" }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "FunctionAppName": { "type": "string", "value": "[variables('functionAppName')]" },
+    "ResourceGroupName": { "type": "string", "value": "[variables('resourceGroupName')]" },
+    "ManagedIdentityPrincipalId": { "type": "string", "value": "[reference(concat(variables('prefix'), '-function')).outputs.principalId.value]" }
+  }
+}

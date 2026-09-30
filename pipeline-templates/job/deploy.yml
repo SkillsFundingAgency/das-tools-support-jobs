@@ -1,0 +1,43 @@
+parameters:
+  ServiceConnection:
+  SolutionBaseName:
+  Environment:
+
+jobs:
+- deployment: DeployFunctionApp
+  pool:
+    name: DAS - Continuous Deployment Agents
+  environment: ${{ parameters.Environment }}
+  strategy:
+    runOnce:
+      deploy:
+        steps:
+        - download: current
+          artifact: ${{ parameters.SolutionBaseName }}
+        - task: AzureCLI@2
+          displayName: Deploy Function App and Search managed identity access
+          inputs:
+            azureSubscription: ${{ parameters.ServiceConnection }}
+            scriptType: pscore
+            scriptLocation: scriptPath
+            scriptPath: $(Pipeline.Workspace)/${{ parameters.SolutionBaseName }}/azure/deploy.ps1
+          env:
+            SubscriptionId: $(SubscriptionId)
+            ResourceEnvironmentName: $(ResourceEnvironmentName)
+            EnvironmentName: $(EnvironmentName)
+            ResourceGroupLocation: $(ResourceGroupLocation)
+            SharedEnvResourceGroup: $(SharedEnvResourceGroup)
+            SharedAiSearchName: $(SharedAiSearchName)
+            SubnetResourceId: $(SubnetResourceId)
+            WorkerAccessRestrictions: $(WorkerAccessRestrictions)
+            SharedStorageAccountConnectionString: $(SharedStorageAccountConnectionString)
+            ApplicationInsightsConnectionString: $(ApplicationInsightsConnectionString)
+            EmployerProfilesApiBaseUrl: $(EmployerProfilesApiBaseUrl)
+            EmployerProfilesApiIdentifierUri: $(EmployerProfilesApiIdentifierUri)
+            Tags: $(Tags)
+        - task: AzureFunctionApp@2
+          inputs:
+            azureSubscription: ${{ parameters.ServiceConnection }}
+            appType: functionApp
+            appName: $(FunctionAppName)
+            package: $(Pipeline.Workspace)/${{ parameters.SolutionBaseName }}/${{ parameters.SolutionBaseName }}.zip

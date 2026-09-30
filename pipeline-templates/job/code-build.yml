@@ -6,38 +6,34 @@ jobs:
 - job: CodeBuild
   pool:
     name: DAS - Continuous Integration Agents
-    workspace:
-      clean: all
-  variables:
-  - group: BUILD Management Resources
+  workspace:
+    clean: all
   steps:
   - checkout: self
-    fetchDepth: 0
-    
-  - template: azure-pipelines-templates/build/step/gitversion.yml@das-platform-building-blocks
-
-  - template: azure-pipelines-templates/build/step/app-build.yml@das-platform-building-blocks
-
+  - task: UseDotNet@2
+    inputs:
+      packageType: sdk
+      version: 10.0.x
   - task: DotNetCoreCLI@2
-    displayName: Publish - dotnet publish ${{ parameters.SolutionBaseName }}
+    displayName: Build and run unit tests
+    inputs:
+      command: test
+      projects: src/${{ parameters.SolutionBaseName }}.sln
+      arguments: --configuration ${{ parameters.BuildConfiguration }} --collect:"XPlat Code Coverage"
+  - task: DotNetCoreCLI@2
+    displayName: Publish Function App
     inputs:
       command: publish
-      publishWebProjects: false #set to false as this setting (which defaults to true) will parse the entire repo for web projects
+      publishWebProjects: false
       projects: src/${{ parameters.SolutionBaseName }}/${{ parameters.SolutionBaseName }}.csproj
-      arguments: -o $(build.artifactstagingdirectory)/publish -c ${{ parameters.BuildConfiguration }} --no-build
+      arguments: --configuration ${{ parameters.BuildConfiguration }} --no-build --output $(Build.ArtifactStagingDirectory)/publish
       modifyOutputPath: true
       zipAfterPublish: true
-
   - task: CopyFiles@2
-    displayName: Copy Files to $(build.artifactstagingdirectory)/publish
     inputs:
-      Contents: |
-        azure/**
-      TargetFolder: $(build.artifactstagingdirectory)/publish
-      OverWrite: true
-
+      Contents: azure/**
+      TargetFolder: $(Build.ArtifactStagingDirectory)/publish
   - task: PublishPipelineArtifact@1
-    displayName: Publish Build Artifact
     inputs:
-      targetPath: $(build.artifactstagingdirectory)/publish
+      targetPath: $(Build.ArtifactStagingDirectory)/publish
       artifactName: ${{ parameters.SolutionBaseName }}
