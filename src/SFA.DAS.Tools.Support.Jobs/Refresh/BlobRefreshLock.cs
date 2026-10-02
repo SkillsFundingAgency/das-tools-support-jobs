@@ -15,7 +15,7 @@ public interface IRefreshLock
     Task<IRefreshLease> Acquire(CancellationToken cancellationToken);
 }
 
-public sealed class BlobRefreshLock(BlobContainerClient container, ILogger<BlobRefreshLock> logger) : IRefreshLock
+public sealed class BlobRefreshLock(BlobContainerClient container, ILogger<BlobRefreshLock> logger, TimeProvider timeProvider) : IRefreshLock
 {
     public async Task<IRefreshLease> Acquire(CancellationToken cancellationToken)
     {
@@ -30,22 +30,24 @@ public sealed class BlobRefreshLock(BlobContainerClient container, ILogger<BlobR
         var client = blob.GetBlobLeaseClient();
         // Conflicts throw, so the queue retries rather than acknowledging an unfinished refresh.
         await client.AcquireAsync(TimeSpan.FromSeconds(60), cancellationToken: cancellationToken);
-        return new RenewableLease(client, logger, cancellationToken);
+        return new RenewableLease(client, logger, timeProvider, cancellationToken);
     }
 
     private sealed class RenewableLease : IRefreshLease
     {
         private readonly BlobLeaseClient client;
         private readonly ILogger logger;
+        private readonly TimeProvider timeProvider;
         private readonly CancellationTokenSource stop = new();
         private readonly CancellationTokenSource work;
         private readonly Task renewal;
         public CancellationToken CancellationToken => work.Token;
 
-        public RenewableLease(BlobLeaseClient client, ILogger logger, CancellationToken cancellationToken)
+        public RenewableLease(BlobLeaseClient client, ILogger logger, TimeProvider timeProvider, CancellationToken cancellationToken)
         {
             this.client = client;
             this.logger = logger;
+            this.timeProvider = timeProvider;
             work = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             renewal = Renew();
         }
@@ -54,7 +56,7 @@ public sealed class BlobRefreshLock(BlobContainerClient container, ILogger<BlobR
         {
             try
             {
-                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(20));
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(20), timeProvider);
                 while (await timer.WaitForNextTickAsync(stop.Token))
                 {
                     // Stop work before the lease can expire if renewal cannot be confirmed.

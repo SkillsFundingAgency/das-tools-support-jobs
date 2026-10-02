@@ -2,7 +2,7 @@
 
 ## Before testing
 
-Deploy to a development/test environment with the variables and managed-identity permissions in the README. Use its existing shared Search service. Check that the profiles API supports `GET /api/users?pageSize=1000&pageNumber=1` and returns `userProfiles`, `totalCount`, `pageNumber`, `pageSize`. Its profile fields are `id`, `email`, `displayName`.
+Merge/build the supporting configuration PR, deploy Profiles API PR #318, and deploy this Function App to a development/test environment using the shared pipeline and variables in the README. Confirm the configuration-table and app-role assignment steps succeeded. Use its existing shared Search service. Check that the profiles API supports `GET /api/users?pageSize=1000&pageNumber=1` and returns `userProfiles`, `totalCount`, `pageNumber`, `pageSize`. Its profile fields are `id`, `email`, `displayName`.
 
 For failure injection, point a test instance of the Function App at a controlled profiles API stub containing synthetic users. Do not change source user records or shared-service permissions to manufacture errors. Avoid running unrelated refreshes against the same user alias during a test.
 
@@ -36,3 +36,18 @@ dotnet test src/SFA.DAS.Tools.Support.Jobs.sln --configuration Release --filter 
 For a known indexed synthetic user, query **the alias** using the email prefix (for example `user.name`) with `searchFields=EmailAddress`. For display names use `queryType=full`, `searchFields=DisplayName` and `search=tes*` for a `Test User` record. For fuzzy matching try `search=tset~1` on `DisplayName`. Escape Lucene special characters in user-supplied full-syntax queries; lower-case prefix/fuzzy email terms. This story provides the index; it does not replace the support UI search client.
 
 Keep evidence of each alias target, retained indexes, source/index count, worker invocation outcome and analyser output. The automated suite and a successful publish validate code; permissions, deployment and real Search behaviour require these environment checks.
+
+## Acceptance status before Azure testing
+
+The automated suite covers the implementation; it does not sign off the Azure environment.
+
+| Story criterion | Code/local evidence | Required live evidence |
+| --- | --- | --- |
+| AC1: daily refresh builds a dated index from all pages, verifies then switches alias | Timer/queue tests, multi-page refresh, count and upload validation | Scheduled invocation, all-page logs, matching source/index counts and alias target |
+| AC2: refresh failure leaves alias unchanged | API/page/upload failure tests | Controlled later-page failure with A still serving |
+| AC3: successful B retains A | Retention test | Alias B; A and B both present |
+| AC4: successful C deletes A and keeps B | Three-generation retention test | Alias C; only B and C remain |
+| AC5: verification failure cannot promote | Count mismatch, incomplete upload and changed-source tests | Failed verification with unchanged serving alias |
+| AC6: email analyser preserves whole email and emits lower-case prefixes from length 3 | Schema tests; explicit live Analyze API test supplied | Real Analyze API output for `user.name+test@example.com` |
+
+Record the deployed commit, successful pipeline run, worker invocation IDs, alias/index counts and analyser output before marking APPMAN-2137 complete.

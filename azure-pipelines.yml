@@ -1,23 +1,40 @@
 trigger:
   batch: true
   branches:
-    include: [main]
-pr:
-  branches:
-    include: [main]
-
-parameters:
-- name: DeployEnvironment
-  displayName: Environment to deploy after a successful build
-  type: string
-  default: none
-  values: [none, AT, TEST, TEST2, DEMO]
+    include:
+      - "main"
 
 variables:
 - name: SolutionBaseName
   value: SFA.DAS.Tools.Support.Jobs
 - name: BuildConfiguration
-  value: Release
+  value: release
+- name: BuildPlatform
+  value: any cpu
+- group: RELEASE Management Resources
+- group: RELEASE das-tools-support-jobs
+- name: Deploy
+  value: $[or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.Reason'], 'Manual'), eq(variables['Build.Reason'], 'PullRequest'))]
+
+
+resources:
+  repositories:
+  - repository: self
+  - repository: das-platform-building-blocks
+    type: github
+    name: SkillsFundingAgency/das-platform-building-blocks
+    ref: refs/tags/3.0.14
+    endpoint: SkillsFundingAgency
+  - repository: das-platform-automation
+    type: github
+    name: SkillsFundingAgency/das-platform-automation
+    ref: refs/tags/5.1.19
+    endpoint: SkillsFundingAgency
+  pipelines:
+  - pipeline: das-employer-config
+    project: Digital Apprenticeship Service
+    source: das-employer-config
+    branch: master
 
 stages:
 - stage: Build
@@ -27,18 +44,108 @@ stages:
       SolutionBaseName: $(SolutionBaseName)
       BuildConfiguration: $(BuildConfiguration)
 
-- ${{ if ne(parameters.DeployEnvironment, 'none') }}:
-  - stage: Deploy
-    dependsOn: Build
-    condition: succeeded()
-    displayName: Deploy to ${{ parameters.DeployEnvironment }}
-    variables:
-    - group: DevTest Management Resources
-    - group: ${{ parameters.DeployEnvironment }} DevTest Shared Resources
-    - group: ${{ parameters.DeployEnvironment }} das-tools-support-jobs
-    jobs:
-    - template: pipeline-templates/job/deploy.yml
-      parameters:
-        Environment: ${{ parameters.DeployEnvironment }}
-        ServiceConnection: SFA-DAS-DevTest-ARM
-        SolutionBaseName: $(SolutionBaseName)
+- stage: Deploy_AT
+  dependsOn: Build
+  displayName: Deploy to AT
+  condition: and(succeeded(), eq(variables.Deploy, 'true'))
+  variables:
+  - group: DevTest Management Resources
+  - group: AT DevTest Shared Resources
+  - group: AT das-tools-support-jobs
+  jobs:
+  - template: pipeline-templates/job/deploy.yml
+    parameters:
+      Environment: AT
+      SolutionBaseName: $(SolutionBaseName)
+      ServiceConnection: SFA-DAS-DevTest-ARM
+      AppRoleAssignmentsServiceConnection: das-app-role-assignments-CDS
+
+- stage: Deploy_TEST
+  dependsOn: Build
+  displayName: Deploy to TEST
+  variables:
+  - group: DevTest Management Resources
+  - group: TEST DevTest Shared Resources
+  - group: TEST das-tools-support-jobs
+  jobs:
+  - template: pipeline-templates/job/deploy.yml
+    parameters:
+      Environment: TEST
+      SolutionBaseName: $(SolutionBaseName)
+      ServiceConnection: SFA-DAS-DevTest-ARM
+      AppRoleAssignmentsServiceConnection: das-app-role-assignments-CDS
+
+- stage: Deploy_TEST2
+  dependsOn: Build
+  displayName: Deploy to TEST2
+  variables:
+  - group: DevTest Management Resources
+  - group: TEST2 DevTest Shared Resources
+  - group: TEST2 das-tools-support-jobs
+  jobs:
+  - template: pipeline-templates/job/deploy.yml
+    parameters:
+      Environment: TEST2
+      SolutionBaseName: $(SolutionBaseName)
+      ServiceConnection: SFA-DAS-DevTest-ARM
+      AppRoleAssignmentsServiceConnection: das-app-role-assignments-CDS
+
+- stage: Deploy_PP
+  dependsOn: Build
+  displayName: Deploy to PP
+  variables:
+  - group: PreProd Management Resources
+  - group: PreProd Shared Resources
+  - group: PreProd das-tools-support-jobs
+  jobs:
+  - template: pipeline-templates/job/deploy.yml
+    parameters:
+      Environment: PP
+      SolutionBaseName: $(SolutionBaseName)
+      ServiceConnection: SFA-DIG-PreProd-ARM
+      AppRoleAssignmentsServiceConnection: das-app-role-assignments-FCS
+
+- stage: Deploy_PROD
+  dependsOn: Build
+  displayName: Deploy to PROD
+  variables:
+  - group: PROD Management Resources
+  - group: PROD Shared Resources
+  - group: PROD das-tools-support-jobs
+  jobs:
+  - template: pipeline-templates/job/deploy.yml
+    parameters:
+      Environment: PROD
+      SolutionBaseName: $(SolutionBaseName)
+      ServiceConnection: SFA-DIG-Prod-ARM
+      AppRoleAssignmentsServiceConnection: das-app-role-assignments-FCS
+
+- stage: Deploy_MO
+  dependsOn: Build
+  displayName: Deploy to MO
+  variables:
+  - group: MO Management Resources
+  - group: MO Shared Resources
+  - group: MO das-tools-support-jobs
+  jobs:
+  - template: pipeline-templates/job/deploy.yml
+    parameters:
+      Environment: MO
+      SolutionBaseName: $(SolutionBaseName)
+      ServiceConnection: SFA-ASM-ModelOffice-ARM
+      AppRoleAssignmentsServiceConnection: das-app-role-assignments-FCS
+
+- stage: Deploy_DEMO
+  dependsOn: Build
+  displayName: Deploy to DEMO
+  variables:
+  - group: DevTest Management Resources
+  - group: DEMO DevTest Shared Resources
+  - group: DEMO das-tools-support-jobs
+  jobs:
+  - template: pipeline-templates/job/deploy.yml
+    parameters:
+      Environment: DEMO
+      SolutionBaseName: $(SolutionBaseName)
+      ServiceConnection: SFA-DAS-DevTest-ARM
+      AppRoleAssignmentsServiceConnection: das-app-role-assignments-CDS

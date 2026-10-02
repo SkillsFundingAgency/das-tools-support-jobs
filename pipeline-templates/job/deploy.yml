@@ -2,6 +2,7 @@ parameters:
   ServiceConnection:
   SolutionBaseName:
   Environment:
+  AppRoleAssignmentsServiceConnection:
 
 jobs:
 - deployment: DeployFunctionApp
@@ -12,32 +13,43 @@ jobs:
     runOnce:
       deploy:
         steps:
-        - download: current
-          artifact: ${{ parameters.SolutionBaseName }}
-        - task: AzureCLI@2
-          displayName: Deploy Function App and Search managed identity access
-          inputs:
-            azureSubscription: ${{ parameters.ServiceConnection }}
-            scriptType: pscore
-            scriptLocation: scriptPath
-            scriptPath: $(Pipeline.Workspace)/${{ parameters.SolutionBaseName }}/azure/deploy.ps1
-          env:
+        - template: azure-pipelines-templates/deploy/step/wait-azure-devops-deployment.yml@das-platform-building-blocks
+          parameters:
+            ServiceConnection: ${{ parameters.ServiceConnection }}
+            EnvironmentId: $(Environment.Id)
+            PipelineName: $(Build.DefinitionName)
+            RunId: $(Build.BuildId)
+        - template: azure-pipelines-templates/deploy/step/arm-deploy.yml@das-platform-building-blocks
+          parameters:
+            ServiceConnection: ${{ parameters.ServiceConnection }}
             SubscriptionId: $(SubscriptionId)
-            ResourceEnvironmentName: $(ResourceEnvironmentName)
+            Location: $(ResourceGroupLocation)
+            Environment: ${{ parameters.Environment }}
+            TemplatePath: $(Pipeline.Workspace)/${{ parameters.SolutionBaseName }}/azure/template.json
+            ParametersPath: $(Pipeline.Workspace)/${{ parameters.SolutionBaseName }}/azure/template.parameters.json
+            IsMultiRepoCheckout: true
+            TemplateSecrets:
+              ConfigurationStorageConnectionString: $(ConfigurationStorageConnectionString)
+              SharedStorageAccountConnectionString: $(SharedStorageAccountConnectionString)
+              ApplicationInsightsConnectionString: $(ApplicationInsightsConnectionString)
+        - template: azure-pipelines-templates/deploy/step/generate-config.yml@das-platform-building-blocks
+          parameters:
             EnvironmentName: $(EnvironmentName)
-            ResourceGroupLocation: $(ResourceGroupLocation)
-            SharedEnvResourceGroup: $(SharedEnvResourceGroup)
-            SharedAiSearchName: $(SharedAiSearchName)
-            SubnetResourceId: $(SubnetResourceId)
-            WorkerAccessRestrictions: $(WorkerAccessRestrictions)
-            SharedStorageAccountConnectionString: $(SharedStorageAccountConnectionString)
-            ApplicationInsightsConnectionString: $(ApplicationInsightsConnectionString)
-            EmployerProfilesApiBaseUrl: $(EmployerProfilesApiBaseUrl)
-            EmployerProfilesApiIdentifierUri: $(EmployerProfilesApiIdentifierUri)
-            Tags: $(Tags)
-        - task: AzureFunctionApp@2
-          inputs:
-            azureSubscription: ${{ parameters.ServiceConnection }}
-            appType: functionApp
-            appName: $(FunctionAppName)
-            package: $(Pipeline.Workspace)/${{ parameters.SolutionBaseName }}/${{ parameters.SolutionBaseName }}.zip
+            ServiceConnection: ${{ parameters.ServiceConnection }}
+            SourcePath: $(Pipeline.Workspace)/das-employer-config/Configuration/das-tools-support-jobs
+            StorageAccountName: $(ConfigurationStorageAccountName)
+            StorageAccountResourceGroup: $(SharedEnvResourceGroup)
+            TargetFileName: '*.schema.json'
+            TableName: Configuration
+            Version: '1.0'
+        - template: azure-pipelines-templates/deploy/step/app-role-assignments.yml@das-platform-building-blocks
+          parameters:
+            ServiceConnection: ${{ parameters.AppRoleAssignmentsServiceConnection }}
+            ResourceName: $(FunctionAppName)
+            Tenant: $(Tenant)
+            IsMultiRepoCheckout: true
+        - template: azure-pipelines-templates/deploy/step/function-deploy.yml@das-platform-building-blocks
+          parameters:
+            ServiceConnection: ${{ parameters.ServiceConnection }}
+            FunctionAppName: $(FunctionAppName)
+            DeploymentPackagePath: $(Pipeline.Workspace)/${{ parameters.SolutionBaseName }}/${{ parameters.SolutionBaseName }}/${{ parameters.SolutionBaseName }}.zip

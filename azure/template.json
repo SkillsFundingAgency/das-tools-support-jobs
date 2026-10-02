@@ -12,8 +12,7 @@
     "workerAccessRestrictions": { "type": "array" },
     "sharedStorageAccountConnectionString": { "type": "securestring" },
     "applicationInsightsConnectionString": { "type": "securestring" },
-    "employerProfilesApiBaseUrl": { "type": "string" },
-    "employerProfilesApiIdentifierUri": { "type": "string" },
+    "configurationStorageConnectionString": { "type": "securestring" },
     "refreshUserSearchIndexSchedule": { "type": "string", "defaultValue": "0 0 2 * * *" },
     "appServicePlanSku": { "type": "string", "defaultValue": "S1" },
     "tags": { "type": "object" }
@@ -58,9 +57,8 @@
               { "name": "FUNCTIONS_WORKER_RUNTIME", "value": "dotnet-isolated" },
               { "name": "WEBSITE_RUN_FROM_PACKAGE", "value": "1" },
               { "name": "RefreshUserSearchIndexSchedule", "value": "[parameters('refreshUserSearchIndexSchedule')]" },
-              { "name": "ToolsSupportJobs__AzureSearchBaseUrl", "value": "[concat('https://', parameters('sharedAiSearchName'), '.search.windows.net')]" },
-              { "name": "ToolsSupportJobs__EmployerProfilesApiBaseUrl", "value": "[parameters('employerProfilesApiBaseUrl')]" },
-              { "name": "ToolsSupportJobs__EmployerProfilesApiIdentifierUri", "value": "[parameters('employerProfilesApiIdentifierUri')]" }
+              { "name": "ConfigNames", "value": "SFA.DAS.Tools.Support.Jobs_1.0" },
+              { "name": "ConfigurationStorageConnectionString", "value": "[parameters('configurationStorageConnectionString')]" }
             ] }
           }
         },

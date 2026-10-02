@@ -34,32 +34,41 @@ On Windows, use a short checkout path. If the Functions packaging step exceeds W
 
 ## Configuration and deployment
 
-Settings are Function App environment settings supplied by `azure/template.json`; a separate configuration-table deployment is not required. The `__` separator maps into .NET configuration sections.
+The Azure DevOps pipeline follows `das-employer-finance-jobs`: shared DAS build/deploy templates, GitVersion, SonarCloud, environment variable groups, the `das-employer-config` pipeline artifact, configuration-table generation and managed-identity app-role assignment. Templates are pinned to building-blocks 3.0.14 and platform-automation 5.1.19. The Search role ARM template is pinned to 3.0.17, matching reservations.
 
-| App setting | Purpose |
+The build installs .NET 10, runs unit tests with OpenCover coverage, scans packages, publishes the Function App zip and packages `azure/template.json`. `coverlet.msbuild` supplies the report required by the shared Sonar template. Generated Functions SDK source is excluded from coverage; application code is included. The opt-in live Azure analyser test is excluded from normal CI and must be run separately in a test environment.
+
+Deployment stages are AT, TEST, TEST2, DEMO, PP, PROD and MO, using the same service connections and Azure DevOps environments as finance-jobs. Each depends on Build. AT uses the existing main/manual/PR condition; the other stages use the existing environment approval gates. Configure those approvals before enabling a new pipeline.
+
+Each deployment waits for competing deployments, provisions ARM resources, generates configuration version `1.0` into the `Configuration` table, assigns the Profiles API app role, then deploys the Function App package. Package path within artifact `SFA.DAS.Tools.Support.Jobs` is `SFA.DAS.Tools.Support.Jobs/SFA.DAS.Tools.Support.Jobs.zip`.
+
+### Required pipeline setup
+
+1. Merge/build the supporting `das-employer-config` change first. Its **master** artifact must contain `das-tools-support-jobs/SFA.DAS.Tools.Support.Jobs.schema.json` and the `-toolssupjobs-fa` role assignment. The shared app-role step only runs with the config master artifact.
+2. Create/authorize the Azure DevOps definition using this repository's `azure-pipelines.yml`; authorize GitHub, shared template repositories, service connections, the DAS GitHub App secure file, config pipeline resource and existing BUILD/RELEASE management groups. Create the SonarCloud project `SkillsFundingAgency_das-tools-support-jobs` and configure its service connection access.
+3. Create/authorize `RELEASE das-tools-support-jobs` and the AT/TEST/TEST2/DEMO/PreProd/PROD/MO `das-tools-support-jobs` groups. Keep `ServiceName=toolssupjobs` so resource names match the configured app-role suffix. Each stage also uses its matching management/shared groups, as in finance-jobs.
+4. Supply the variables below, confirm the target environment's approval gates, then run Build and deploy to AT first. Use a config artifact from master that contains the new schema/assignment.
+5. Deploy [Profiles API PR #318](https://github.com/SkillsFundingAgency/das-employer-profiles-api/pull/318) before the first refresh. Test the Azure acceptance scenarios in [docs/testing.md](docs/testing.md).
+
+| Pipeline variables | Purpose |
 | --- | --- |
-| `AzureWebJobsStorage` | Storage connection for Functions, refresh queue and distributed lease |
-| `EnvironmentName` | Environment; unauthenticated profiles calls permitted only in LOCAL/DEV |
-| `RefreshUserSearchIndexSchedule` | NCRONTAB schedule; `0 0 2 * * *` by default, UTC |
-| `ToolsSupportJobs__AzureSearchBaseUrl` | Shared Search endpoint, derived from `SharedAiSearchName` during deployment |
-| `ToolsSupportJobs__EmployerProfilesApiBaseUrl` | Profiles API root URL, before `/api/users` |
-| `ToolsSupportJobs__EmployerProfilesApiIdentifierUri` | Entra API resource identifier; tokens request its `/.default` scope |
-| `ToolsSupportJobs__PageSize` | Optional, 1–1000; defaults to 1000 |
-| `ToolsSupportJobs__VerificationAttempts` | Optional, 1–120; defaults to 12 |
-| `ToolsSupportJobs__VerificationDelaySeconds` | Optional, 1–60; defaults to 5 |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Existing Application Insights connection string |
+| `SubscriptionId`, `Tenant`, `ResourceEnvironmentName`, `EnvironmentName`, `ResourceGroupLocation`, `SharedEnvResourceGroup`, `Tags` | Deployment context; `Tags` is a JSON object |
+| `SharedAiSearchName`, `AzureSearchBaseUrl` | Existing reservations Search service name and matching HTTPS endpoint |
+| `SubnetResourceId`, `WorkerAccessRestrictions` | Existing delegated App Service subnet and JSON access-restriction array |
+| `SharedStorageAccountConnectionString` | Secret: Functions queue, trigger state and distributed lease |
+| `ConfigurationStorageConnectionString`, `ConfigurationStorageAccountName` | Secret connection string and account name for DAS configuration storage |
+| `ApplicationInsightsConnectionString` | Secret: existing Application Insights connection |
+| `EmployerProfilesApiBaseUrl` | HTTPS Profiles API root URL, before `/api/users` |
+| `EmployerProfilesApiIdentifier` | Existing Entra identifier for the Profiles API; maps to `EmployerProfilesApiIdentifierUri` in application config |
+| `RefreshUserSearchIndexSchedule` | Optional NCRONTAB override; default `0 0 2 * * *`, UTC |
+| `AppServicePlanSku` | Optional plan SKU override; default S1 |
 
-Create an Azure DevOps pipeline using `azure-pipelines.yml`. CI builds/tests/publishes without deployment variable groups. To deploy, manually select `DeployEnvironment` (AT, TEST, TEST2 or DEMO); its default is `none`. Normal environment approvals remain in effect. The build produces `SFA.DAS.Tools.Support.Jobs.zip` and the Azure deployment files in the `SFA.DAS.Tools.Support.Jobs` artifact.
+ARM supplies host settings `AzureWebJobsStorage`, `EnvironmentName`, `RefreshUserSearchIndexSchedule`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `ConfigNames=SFA.DAS.Tools.Support.Jobs_1.0` and `ConfigurationStorageConnectionString`. The timer schedule stays in Function App settings because the Functions host cannot read worker-only table configuration.
 
-Deployment uses `DevTest Management Resources`, `<ENV> DevTest Shared Resources` and `<ENV> das-tools-support-jobs`. Supply these variables across those groups:
+Application settings are under `ToolsSupportJobs` in the configuration table: `AzureSearchBaseUrl`, `EmployerProfilesApiBaseUrl`, `EmployerProfilesApiIdentifierUri`, `PageSize` (1000), `VerificationAttempts` (12) and `VerificationDelaySeconds` (5). Environment variables using the `ToolsSupportJobs__` prefix can override these. LOCAL/DEV can use only the environment settings exported by Core Tools without a table connection; deployed environments require the versioned table configuration.
 
-- `SubscriptionId`, `ResourceEnvironmentName`, `EnvironmentName`, `ResourceGroupLocation`, `SharedEnvResourceGroup`, `SharedAiSearchName` (the existing reservations Search service).
-- `SubnetResourceId` for an existing App Service delegated subnet with routes/DNS permitting profiles, Search and storage access; `WorkerAccessRestrictions` as a JSON array.
-- `SharedStorageAccountConnectionString` and `ApplicationInsightsConnectionString` as secret variables.
-- `EmployerProfilesApiBaseUrl`, `EmployerProfilesApiIdentifierUri`, and `Tags` as a JSON object.
+The ARM template creates a Windows S1 plan, .NET 10 isolated Function App, system-assigned managed identity, Always On and VNet integration. It assigns the platform `AiSearchIndexContributor` role at the existing shared Search service scope. The shared app-role step grants the Function App the Profiles API `Default` role using `das-app-role-assignments-CDS` (DevTest) or `das-app-role-assignments-FCS` (PP/PROD/MO). The appropriate deployment identity needs permission to create the resources and assign Search access; the app-role connection needs Entra assignment permissions.
 
-The template creates a Windows S1 App Service plan, Function App and system-assigned managed identity, with .NET 10 isolated worker, Always On and VNet integration. It assigns the platform's existing `AiSearchIndexContributor` role at the shared Search service scope, following reservations. The deployment identity needs subscription/RG deployment permissions and permission to assign that role. No new Search service is created.
+Confirm routes/DNS permit Profiles API, Search, configuration storage and job storage access. Search must allow Entra/RBAC data-plane authentication. Storage uses connection strings. A successful local build does not verify these permissions or network paths.
 
-Before running the first refresh, DevOps must grant the Function App managed identity the profiles API's `Default` application role. The template outputs its principal ID. This Entra app-role assignment is external to ARM and is not automatically granted here. Confirm API access and network connectivity before enabling/testing the daily schedule. Search must allow Entra/RBAC data-plane authentication. The app uses the shared storage connection, so no storage RBAC assignment is required.
-
-See [tester instructions](docs/testing.md) for acceptance checks and the optional live analyser test.
+See [tester instructions](docs/testing.md) for acceptance evidence. The story remains awaiting deployment and live acceptance testing until those checks pass.

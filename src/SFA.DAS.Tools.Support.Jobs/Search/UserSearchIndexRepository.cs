@@ -54,7 +54,12 @@ public sealed class UserSearchIndexRepository(SearchIndexClient client) : IUserS
 
     public async Task Promote(string name, IndexAlias previous, CancellationToken cancellationToken)
     {
-        var alias = previous.Definition ?? new SearchAlias(AliasName, name);
+        if (previous.Definition is null)
+        {
+            await client.CreateAliasAsync(new SearchAlias(AliasName, name), cancellationToken);
+            return;
+        }
+        var alias = previous.Definition;
         alias.Indexes.Clear();
         alias.Indexes.Add(name);
         await client.CreateOrUpdateAliasAsync(AliasName, alias, onlyIfUnchanged: true, cancellationToken: cancellationToken);
