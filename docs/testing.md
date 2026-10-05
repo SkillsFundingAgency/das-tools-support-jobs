@@ -2,7 +2,7 @@
 
 ## Before testing
 
-Merge/build the supporting configuration PR, deploy Profiles API PR #318, and deploy this Function App to a development/test environment using the shared pipeline and variables in the README. Confirm the configuration-table and app-role assignment steps succeeded. Use its existing shared Search service. Check that the profiles API supports `GET /api/users?pageSize=1000&pageNumber=1` and returns `userProfiles`, `totalCount`, `pageNumber`, `pageSize`. Its profile fields are `id`, `email`, `displayName`.
+Merge/build the supporting configuration PR, deploy Profiles API PR #319, and deploy this Function App to a development/test environment using the shared pipeline and variables in the README. Confirm the configuration-table and app-role assignment steps succeeded. Use its existing shared Search service. Check that the profiles API supports `GET /api/users?pageSize=1000&pageNumber=1` and returns `userProfiles`, `totalCount`, `pageNumber`, `pageSize`. Its profile fields are `id`, `email`, `displayName`.
 
 For failure injection, point a test instance of the Function App at a controlled profiles API stub containing synthetic users. Do not change source user records or shared-service permissions to manufacture errors. Avoid running unrelated refreshes against the same user alias during a test.
 
