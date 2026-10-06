@@ -1,0 +1,12 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "EnvironmentName": "LOCAL",
+    "RefreshUserSearchIndexSchedule": "0 0 2 * * *",
+    "ToolsSupportJobs__AzureSearchBaseUrl": "https://YOUR-SEARCH-SERVICE.search.windows.net",
+    "ToolsSupportJobs__EmployerProfilesApiBaseUrl": "http://localhost:5000/",
+    "ToolsSupportJobs__EmployerProfilesApiIdentifierUri": ""
+  }
+}
