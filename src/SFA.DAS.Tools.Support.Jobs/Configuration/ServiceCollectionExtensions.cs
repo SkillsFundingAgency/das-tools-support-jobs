@@ -10,6 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using SFA.DAS.Tools.Support.Jobs.Accounts;
 using SFA.DAS.Tools.Support.Jobs.Functions;
 using SFA.DAS.Tools.Support.Jobs.Profiles;
 using SFA.DAS.Tools.Support.Jobs.Refresh;
@@ -51,6 +52,26 @@ public static class ServiceCollectionExtensions
             client.Timeout = TimeSpan.FromSeconds(100);
         });
         services.AddTransient<IUserSearchIndexRefresh, UserSearchIndexRefresh>();
+        services.AddOptions<JobsOptions>(AccountSearchIndexRepository.AliasName).Bind(configuration.GetSection(JobsOptions.SectionName))
+            .Validate(o => Uri.TryCreate(o.EmployerAccountsApiBaseUrl, UriKind.Absolute, out var uri) &&
+                (uri.Scheme == "https" || (uri.IsLoopback && uri.Scheme == "http")), "EmployerAccountsApiBaseUrl must be HTTPS or loopback HTTP.")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.EmployerAccountsApiIdentifierUri) ||
+                configuration["EnvironmentName"] is "LOCAL" or "DEV", "EmployerAccountsApiIdentifierUri is required outside LOCAL/DEV.");
+        services.AddKeyedSingleton<QueueClient>(AccountSearchIndexRepository.AliasName, (_, _) =>
+            new QueueClient(storage, RefreshAccountSearchIndex.QueueName, new QueueClientOptions { MessageEncoding = QueueMessageEncoding.Base64 }));
+        services.AddKeyedSingleton<IRefreshRequestQueue>(AccountSearchIndexRepository.AliasName, (sp, _) =>
+            new RefreshRequestQueue(sp.GetRequiredKeyedService<QueueClient>(AccountSearchIndexRepository.AliasName)));
+        services.AddKeyedSingleton<IRefreshLock>(AccountSearchIndexRepository.AliasName, (sp, _) =>
+            new BlobRefreshLock(sp.GetRequiredService<BlobContainerClient>(), sp.GetRequiredService<ILogger<BlobRefreshLock>>(),
+                sp.GetRequiredService<TimeProvider>(), "account-search-index-refresh"));
+        services.AddSingleton<IAccountSearchIndexRepository, AccountSearchIndexRepository>();
+        services.AddHttpClient<IEmployerAccountsClient, EmployerAccountsClient>((sp, client) =>
+        {
+            var accountOptions = sp.GetRequiredService<IOptionsMonitor<JobsOptions>>().Get(AccountSearchIndexRepository.AliasName);
+            client.BaseAddress = new Uri(accountOptions.EmployerAccountsApiBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(100);
+        });
+        services.AddTransient<IAccountSearchIndexRefresh, AccountSearchIndexRefresh>();
         services.AddApplicationInsightsTelemetryWorkerService().ConfigureFunctionsApplicationInsights();
         services.Configure<LoggerFilterOptions>(options =>
         {

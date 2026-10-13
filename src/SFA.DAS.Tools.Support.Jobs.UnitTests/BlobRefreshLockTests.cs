@@ -62,6 +62,25 @@ public class BlobRefreshLockTests
         Assert.ThrowsAsync<RequestFailedException>(() => Create(handler, new FakeTimeProvider()).Acquire(default));
     }
 
+    [Test]
+    public async Task AccountAndUserRefreshesAcquireDifferentLeaseBlobs()
+    {
+        var acquired = new List<string>();
+        using var handler = new StorageHandler(request =>
+        {
+            if (request.Headers.TryGetValues("x-ms-lease-action", out var values) && values.Single() == "acquire")
+                acquired.Add(request.RequestUri!.AbsolutePath);
+            return LeaseResponse(HttpStatusCode.Created);
+        });
+        var container = new BlobContainerClient(new Uri("https://test.blob.core.windows.net/locks"), new BlobClientOptions
+        {
+            Transport = new HttpClientTransport(new HttpClient(handler)), Retry = { MaxRetries = 0 }
+        });
+        var clock = new FakeTimeProvider();
+        await using var userLease = await new BlobRefreshLock(container, NullLogger<BlobRefreshLock>.Instance, clock).Acquire(default);
+        await using var accountLease = await new BlobRefreshLock(container, NullLogger<BlobRefreshLock>.Instance, clock, "account-search-index-refresh").Acquire(default);
+        Assert.That(acquired, Is.EqualTo(new[] { "/locks/user-search-index-refresh", "/locks/account-search-index-refresh" }));
+    }
     private static BlobRefreshLock Create(HttpMessageHandler handler, TimeProvider time) => new(
         new BlobContainerClient(new Uri("https://test.blob.core.windows.net/locks"), new BlobClientOptions
         {

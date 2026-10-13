@@ -15,12 +15,12 @@ public interface IRefreshLock
     Task<IRefreshLease> Acquire(CancellationToken cancellationToken);
 }
 
-public sealed class BlobRefreshLock(BlobContainerClient container, ILogger<BlobRefreshLock> logger, TimeProvider timeProvider) : IRefreshLock
+public sealed class BlobRefreshLock(BlobContainerClient container, ILogger<BlobRefreshLock> logger, TimeProvider timeProvider, string blobName = "user-search-index-refresh") : IRefreshLock
 {
     public async Task<IRefreshLease> Acquire(CancellationToken cancellationToken)
     {
         await container.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
-        var blob = container.GetBlobClient("user-search-index-refresh");
+        var blob = container.GetBlobClient(blobName);
         try
         {
             await blob.UploadAsync(BinaryData.FromString(""), overwrite: false, cancellationToken);
@@ -69,7 +69,7 @@ public sealed class BlobRefreshLock(BlobContainerClient container, ILogger<BlobR
             catch (Exception exception)
             {
                 work.Cancel();
-                logger.LogError(exception, "User search refresh lock renewal failed; cancelling the refresh");
+                logger.LogError(exception, "Search index refresh lock renewal failed; cancelling the refresh");
             }
         }
 
@@ -84,7 +84,7 @@ public sealed class BlobRefreshLock(BlobContainerClient container, ILogger<BlobR
             }
             catch (Exception exception)
             {
-                logger.LogWarning(exception, "User search refresh lock could not be released; its lease will expire");
+                logger.LogWarning(exception, "Search index refresh lock could not be released; its lease will expire");
             }
             work.Dispose();
             stop.Dispose();

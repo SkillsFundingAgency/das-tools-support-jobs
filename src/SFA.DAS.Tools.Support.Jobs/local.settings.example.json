@@ -5,8 +5,11 @@
     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
     "EnvironmentName": "LOCAL",
     "RefreshUserSearchIndexSchedule": "0 0 2 * * *",
+    "RefreshAccountSearchIndexSchedule": "0 30 2 * * *",
     "ToolsSupportJobs__AzureSearchBaseUrl": "https://YOUR-SEARCH-SERVICE.search.windows.net",
     "ToolsSupportJobs__EmployerProfilesApiBaseUrl": "http://localhost:5000/",
-    "ToolsSupportJobs__EmployerProfilesApiIdentifierUri": ""
+    "ToolsSupportJobs__EmployerProfilesApiIdentifierUri": "",
+    "ToolsSupportJobs__EmployerAccountsApiBaseUrl": "http://localhost:5001/",
+    "ToolsSupportJobs__EmployerAccountsApiIdentifierUri": ""
   }
 }
