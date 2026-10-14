@@ -105,35 +105,33 @@ stages:
       ServiceConnection: SFA-DIG-PreProd-ARM
       AppRoleAssignmentsServiceConnection: das-app-role-assignments-FCS
 
-- stage: Deploy_PROD
-  dependsOn: Build
-  displayName: Deploy to PROD
-  variables:
-  - group: PROD Management Resources
-  - group: PROD Shared Resources
-  - group: PROD das-tools-support-jobs
-  jobs:
-  - template: pipeline-templates/job/deploy.yml
-    parameters:
-      Environment: PROD
-      SolutionBaseName: $(SolutionBaseName)
-      ServiceConnection: SFA-DIG-Prod-ARM
-      AppRoleAssignmentsServiceConnection: das-app-role-assignments-FCS
+# - stage: Deploy_PROD
+#   dependsOn: Build
+#   displayName: Deploy to PROD
+#   variables:
+#   - group: PROD Management Resources
+#   - group: PROD Shared Resources
+#   jobs:
+#   - template: pipeline-templates/job/deploy.yml
+#     parameters:
+#       Environment: PROD
+#       SolutionBaseName: $(SolutionBaseName)
+#       ServiceConnection: SFA-DIG-Prod-ARM
+#       AppRoleAssignmentsServiceConnection: das-app-role-assignments-FCS
 
-- stage: Deploy_MO
-  dependsOn: Build
-  displayName: Deploy to MO
-  variables:
-  - group: MO Management Resources
-  - group: MO Shared Resources
-  - group: MO das-tools-support-jobs
-  jobs:
-  - template: pipeline-templates/job/deploy.yml
-    parameters:
-      Environment: MO
-      SolutionBaseName: $(SolutionBaseName)
-      ServiceConnection: SFA-ASM-ModelOffice-ARM
-      AppRoleAssignmentsServiceConnection: das-app-role-assignments-FCS
+# - stage: Deploy_MO
+#   dependsOn: Build
+#   displayName: Deploy to MO
+#   variables:
+#   - group: MO Management Resources
+#   - group: MO Shared Resources
+#   jobs:
+#   - template: pipeline-templates/job/deploy.yml
+#     parameters:
+#       Environment: MO
+#       SolutionBaseName: $(SolutionBaseName)
+#       ServiceConnection: SFA-ASM-ModelOffice-ARM
+#       AppRoleAssignmentsServiceConnection: das-app-role-assignments-FCS
 
 - stage: Deploy_DEMO
   dependsOn: Build
@@ -141,7 +139,6 @@ stages:
   variables:
   - group: DevTest Management Resources
   - group: DEMO DevTest Shared Resources
-  - group: DEMO das-tools-support-jobs
   jobs:
   - template: pipeline-templates/job/deploy.yml
     parameters:
