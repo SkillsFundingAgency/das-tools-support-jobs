@@ -24,12 +24,12 @@ jobs:
       RunAcceptanceTests: false
       SonarCloudProjectKey: SkillsFundingAgency_das-tools-support-jobs
   - task: DotNetCoreCLI@2
-    displayName: Publish Function App
+    displayName: Publish Function App - ${{ parameters.SolutionBaseName }}.Functions
     inputs:
       command: publish
       publishWebProjects: false
-      projects: src/${{ parameters.SolutionBaseName }}/${{ parameters.SolutionBaseName }}.csproj
-      arguments: -o $(Build.ArtifactStagingDirectory)/publish/${{ parameters.SolutionBaseName }}/${{ parameters.SolutionBaseName }} -c ${{ parameters.BuildConfiguration }} --no-build
+      projects: src/${{ parameters.SolutionBaseName }}.Functions/${{ parameters.SolutionBaseName }}.Functions.csproj
+      arguments: -o $(Build.ArtifactStagingDirectory)/publish/${{ parameters.SolutionBaseName }}.Functions/${{ parameters.SolutionBaseName }}.Functions -c ${{ parameters.BuildConfiguration }} --no-build
       modifyOutputPath: false
       zipAfterPublish: true
   - task: CopyFiles@2
