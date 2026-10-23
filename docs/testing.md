@@ -11,7 +11,7 @@ For failure injection, point a test instance of the Function App at a controlled
 1. Record the current `tools-support-users` alias target, dated user index names and source `TotalCount`.
 2. POST `/api/user-search-index/refresh` on the Function App with its function key in the `x-functions-key` header. Expect 202; this means queued, not completed.
 3. Follow the `RefreshUserSearchIndexWorker` invocation in Application Insights. Look for page numbers, page/upload counts, verification and `User search alias switched`, then `User search refresh completed`. Check exceptions and the refresh poison queue if completion is absent.
-4. Confirm the new name is `tools-support-users-{yyyyMMddHHmmss}` and its document count equals the API `TotalCount`. Check a known user's `Id`, `UserId`, `EmailAddress` and `DisplayName` against the source. An empty source must produce a verified empty index.
+4. Confirm the new name is `tools-support-users-{yyyyMMddHHmmss}` and its document count equals the API `TotalCount`. Check a known user's `Id`, `UserId`, `EmailAddress` and `DisplayName` against the source. An empty source must fail the refresh, preserve the existing alias and documents, and remove the unpromoted candidate index.
 5. If the starting alias was A, confirm it now points at B and A still exists. Run another successful refresh (at least one second later); confirm C serves, B remains, A is deleted, and exactly two dated user indexes remain. Other indexes, especially reservations, must remain untouched.
 6. Confirm the timer is configured for `0 0 2 * * *` (UTC). Invoke `RefreshUserSearchIndex` through the Functions admin/Test-Run interface in the test environment, or observe a scheduled execution; it must queue the same worker flow.
 

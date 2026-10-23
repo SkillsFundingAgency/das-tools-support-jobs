@@ -29,6 +29,8 @@ public sealed class UserSearchIndexRefresh(
         try
         {
             var totalCount = await UploadAllPages(name, token);
+            if (totalCount == 0)
+                throw new InvalidOperationException("Profiles API returned no users; keeping the current index.");
             await Verify(name, totalCount, token);
             token.ThrowIfCancellationRequested();
             await indexes.Promote(name, previous, token);

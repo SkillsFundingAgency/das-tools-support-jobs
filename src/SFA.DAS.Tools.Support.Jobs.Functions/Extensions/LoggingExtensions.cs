@@ -2,7 +2,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace SFA.DAS.Tools.Support.Jobs.Infrastructure.Extensions;
+namespace SFA.DAS.Tools.Support.Jobs.Functions.Extensions;
 
 public static class LoggingExtensions
 {

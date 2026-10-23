@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using SFA.DAS.Tools.Support.Jobs.Extensions;
+using SFA.DAS.Tools.Support.Jobs.Functions.Extensions;
 using SFA.DAS.Tools.Support.Jobs.Infrastructure.Extensions;
 
 var host = new HostBuilder()
