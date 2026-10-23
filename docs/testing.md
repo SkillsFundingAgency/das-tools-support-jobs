@@ -51,3 +51,24 @@ The automated suite covers the implementation; it does not sign off the Azure en
 | AC6: email analyser preserves whole email and emits lower-case prefixes from length 3 | Schema tests; explicit live Analyze API test supplied | Real Analyze API output for `user.name+test@example.com` |
 
 Record the deployed commit, successful pipeline run, worker invocation IDs, alias/index counts and analyser output before marking APPMAN-2137 complete.
+
+# APPMAN-2138 testing
+
+Deploy the jobs configuration schema and supply the Accounts API endpoint/identifier first. Obtain approval for the Accounts API read roles and preserve the existing Profiles API role before deploying role assignments. Deploy the Function App to a test environment with access to its existing Search service. Use synthetic account data or a controlled API stub for failure tests.
+
+1. Record the current `tools-support-accounts` alias target, dated account indexes, and source account IDs across all `Data`/`Page`/`TotalPages` pages. Include the final empty page for exact page-size multiples. Count unique source IDs.
+2. POST `/api/account-search-index/refresh` with the function key in `x-functions-key`. Expect 202, meaning queued. Follow `RefreshAccountSearchIndexWorker` logs for page progress, verification, alias switch and completion; inspect its `-poison` queue if retries fail.
+3. Confirm the dated index's document count equals the unique source count. Check an account's `Id`, `AccountId`, `PublicHashedId`, `AccountName`, PAYE references and legal-entity names against account/detail/relationship responses.
+4. If A served before the run, confirm B now serves and A remains. Run again at least one second later: confirm C serves, B remains, and A is deleted. Exactly current plus previous should remain after success; unrelated user/reservations indexes must still exist.
+5. Query `tools-support-accounts` with a known public-ID prefix or PAYE prefix of at least three characters, selecting `PublicHashedId` or `PayeSchemes`. For names/legal-entity names, use an escaped full Lucene prefix or fuzzy query, for example `exam*` on `AccountName` or `LegalEntityNames`. Check filter queries against complete original-cased reference values separately.
+6. With healthy A serving, make a controlled stub fail on a later page, account detail or legal-entity detail. Confirm the account worker fails and A keeps serving. Repeat with duplicate IDs, incomplete pages, changed `TotalPages`, partial upload or an unverified document count; none may promote the candidate.
+7. Disable only `RefreshUserSearchIndex` using its individual Functions setting in the test environment, or observe an independently failed user refresh. Confirm account refresh still queues/runs. Verify account timer configuration defaults to `0 30 2 * * *` UTC and its queue is separate from the user queue. Re-enable any timer changed for testing.
+
+The unit suite covers paging, detail mapping, batch validation, verified promotion, retention, ambiguous alias responses, lease loss, separate queues/leases and account-only configuration failure. The opt-in `LiveAccountAnalyzerTests` creates only a temporary test index, confirms public-ID/PAYE token prefixes and punctuation through Azure's Analyze API, and removes that test index. It does not switch serving aliases. With a permitted development Search endpoint:
+
+```powershell
+$env:TOOLS_SUPPORT_TEST_SEARCH_URL = 'https://YOUR-TEST-SEARCH.search.windows.net'
+dotnet test src/SFA.DAS.Tools.Support.Jobs.sln --configuration Release --filter FullyQualifiedName~LiveAccountAnalyzerTests
+```
+
+Capture the deployed commit, worker outcomes, page/source count, alias targets, retained indexes and real search results. Azure deployment, permissions and live analyser/query behaviour require these checks before story sign-off.

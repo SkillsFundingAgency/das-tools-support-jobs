@@ -9,6 +9,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddRefreshServices(this IServiceCollection services)
     {
         services.AddTransient<IUserSearchIndexRefresh, UserSearchIndexRefresh>();
+        services.AddTransient<IAccountSearchIndexRefresh, AccountSearchIndexRefresh>();
         return services;
     }
 }

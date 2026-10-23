@@ -1,6 +1,6 @@
 # DAS Tools Support Jobs
 
-Azure Functions backend for [APPMAN-2137](https://skillsfundingagency.atlassian.net/browse/APPMAN-2137). It fully refreshes the support-console user index from `das-employer-profiles-api`, using the shared Azure Search service already used by reservations.
+Azure Functions backend for [APPMAN-2137](https://skillsfundingagency.atlassian.net/browse/APPMAN-2137) and [APPMAN-2138](https://skillsfundingagency.atlassian.net/browse/APPMAN-2138). It fully refreshes the support-console user index from `das-employer-profiles-api`, using the shared Azure Search service already used by reservations.
 
 ## Behaviour
 
@@ -27,7 +27,7 @@ The project names and separation follow `das-employer-finance-jobs`:
 | Project | Responsibility |
 | --- | --- |
 | `SFA.DAS.Tools.Support.Jobs.Functions` | Function host and separate timer, HTTP and queue trigger classes |
-| `SFA.DAS.Tools.Support.Jobs.Core` | User search refresh workflow and its service registration |
+| `SFA.DAS.Tools.Support.Jobs.Core` | User and account search refresh workflows and their service registration |
 | `SFA.DAS.Tools.Support.Jobs.Infrastructure` | Configuration, interfaces, models, API client, Search repository, queue and blob lease |
 | `SFA.DAS.Tools.Support.Jobs.UnitTests` | Tests grouped by configuration, functions, services and opt-in integration tests |
 
@@ -85,3 +85,31 @@ The ARM template creates a Windows S1 plan, .NET 10 isolated Function App, syste
 Confirm routes/DNS permit Profiles API, Search, configuration storage and job storage access. Search must allow Entra/RBAC data-plane authentication. Storage uses connection strings. A successful local build does not verify these permissions or network paths.
 
 See [tester instructions](docs/testing.md) for acceptance evidence. The story remains awaiting deployment and live acceptance testing until those checks pass.
+
+## Account search index
+
+APPMAN-2138 adds account refreshes to this Function App. It reuses the Search client, managed identity, queue implementation and renewable blob lease. Account refreshes use their own queue and lock blob, so user and account refreshes can run and retry independently. Missing or invalid account-only configuration fails account workers without preventing the existing user refresh from resolving.
+
+| Function | Trigger | Result |
+| --- | --- | --- |
+| `RefreshAccountSearchIndex` | Daily timer, default 02:30 UTC (`0 30 2 * * *`) | Queues a full account refresh |
+| `RefreshAccountSearchIndexHttp` | Function-key protected POST `/api/account-search-index/refresh` | Queues an account refresh and returns HTTP 202 |
+| `RefreshAccountSearchIndexWorker` | Storage queue `sfa-das-tools-support-account-index-refresh` | Builds, verifies and promotes the account index |
+
+The worker reads `GET /api/accounts?pageSize=1000&pageNumber={n}` from the Employer Accounts API. Its paging contract is `Data`, `Page`, `TotalPages`, with account IDs in `Data`. The current API reports an extra empty final page when the account count is an exact page-size multiple; the worker reads it. All non-final pages must be full, page metadata must stay consistent, and IDs must be positive and unique. This endpoint does not supply `TotalCount`; verification compares Search's count with the unique accounts read across every reported page. Offset paging is not a snapshot of concurrent source changes.
+
+Each account is enriched from `GET /api/accounts/{accountId}`. `PublicHashedAccountId` maps to `PublicHashedId`, `DasAccountName` to `AccountName`, and PAYE resource IDs to the `PayeSchemes` collection. Legal-entity resource IDs are used with `GET /api/accounts/{accountId}/legalentities/{legalEntityId}` to populate `LegalEntityNames`. Returned links are not followed. Account/relationship mismatches or failed detail calls fail the refresh rather than dropping search fields. Logs contain page and document counts, not account names or PAYE values.
+
+Alias `tools-support-accounts` points to a dated `tools-support-accounts-{yyyyMMddHHmmss}` index. Uploads must all succeed and the document count must converge before promotion. Promotion uses the observed alias ETag; the previous alias target is retained until the next success. Cleanup only removes older dated account indexes. User and reservations indexes remain outside account cleanup. A lost alias-update response is re-read before removing a candidate, so a remotely promoted serving index is preserved.
+
+`Id` is the invariant numeric account ID; `AccountId` is filterable. `PublicHashedId` and `PayeSchemes` are searchable and filterable. Keyword analysers preserve full references, including PAYE slashes, lower-case search tokens, and index prefixes of length 3–255. `AccountName` is searchable/sortable and `LegalEntityNames` is searchable with the standard analyser; full Lucene prefix/fuzzy queries can search name fragments. Consumers must escape full-syntax query input. UI/query integration is a separate story.
+
+### Account deployment configuration
+
+Use the supporting `das-employer-config` schema `das-tools-support-jobs/SFA.DAS.Tools.Support.Jobs.schema.json` from configuration master after it is merged and built. Add pipeline variables `EmployerAccountsApiBaseUrl` (HTTPS Accounts API root before `/api/accounts`) and `EmployerAccountsApiIdentifier` (Accounts API Entra identifier). They populate `ToolsSupportJobs.EmployerAccountsApiBaseUrl` and `EmployerAccountsApiIdentifierUri`; LOCAL/DEV can override them with the corresponding `ToolsSupportJobs__` environment variables from `local.settings.example.json`.
+
+The deployment ARM template supplies `RefreshAccountSearchIndexSchedule`, defaulting to `0 30 2 * * *`. A pipeline variable of the same name can override the default through the existing ARM parameter-generation step. The user schedule remains separately configured.
+
+Before deployment, the Function App managed identity ending `-toolssupjobs-fa` needs `ReadAllEmployerAccountBalances` and `ReadAllAccountUsers` on the Accounts API registration ending `-accapi-as-ar`. The first permits account listing and legal-entity reads; the second permits numeric account detail reads. Retain the APPMAN-2137 Profiles API `Default` assignment on `-empprfapi-as-ar`. Apply the shared app-role assignments only after those permission changes are approved. Confirm the configured identifier points to the matching Accounts API registration and that network rules permit its endpoint. A local test does not prove deployed access.
+
+See the APPMAN-2138 section in [tester instructions](docs/testing.md) for live success, retention, failure and search checks.
