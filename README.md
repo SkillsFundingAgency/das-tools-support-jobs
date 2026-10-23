@@ -1,6 +1,6 @@
 # DAS Tools Support Jobs
 
-Azure Functions backend for [APPMAN-2137](https://skillsfundingagency.atlassian.net/browse/APPMAN-2137). It fully refreshes the support-console user index from `das-employer-profiles-api`, using the shared Azure AI Search service already used by reservations.
+Azure Functions backend for [APPMAN-2137](https://skillsfundingagency.atlassian.net/browse/APPMAN-2137). It fully refreshes the support-console user index from `das-employer-profiles-api`, using the shared Azure Search service already used by reservations.
 
 ## Behaviour
 
@@ -16,18 +16,31 @@ Every page must have consistent metadata and the expected number of records; IDs
 
 Only after verification does alias `tools-support-users` move to the new index, with an ETag condition to detect concurrent alias changes. The actual previous alias target is retained. Older dated user indexes are deleted after promotion. Thus a successful refresh leaves current plus previous (one index on the first run); there can temporarily be a third index while building. Unrelated indexes are untouched.
 
-Upload or verification failures propagate to the Functions queue retry mechanism. The alias stays unchanged, and the failed index is removed where possible. An ambiguous alias update is re-read before deleting anything. A crash, lost lease or cleanup failure can leave a non-serving index for cleanup on the next successful refresh. Monitor the `-poison` queue after five failed attempts. Failed cleanup after promotion also fails the queue invocation, but the verified new index continues serving.
+An empty profiles response fails the refresh and preserves the current index. Upload or verification failures propagate to the Functions queue retry mechanism. The alias stays unchanged, and the failed index is removed where possible. An ambiguous alias update is re-read before deleting anything. A crash, lost lease or cleanup failure can leave a non-serving index for cleanup on the next successful refresh. Monitor the `-poison` queue after five failed attempts. Failed cleanup after promotion also fails the queue invocation, but the verified new index continues serving.
 
 Email fields use `email_index` (`uax_url_email`, lowercase, edge n-grams 3–255) and `email_search` (`uax_url_email`, lowercase). Display name uses the standard analyser. Search consumers query the alias; the UI/query integration belongs to the separate support-console story. Full Lucene fuzzy/prefix queries must be escaped and lower-cased appropriately; Azure does not analyse fuzzy or wildcard query terms.
+
+## Solution structure
+
+The project names and separation follow `das-employer-finance-jobs`:
+
+| Project | Responsibility |
+| --- | --- |
+| `SFA.DAS.Tools.Support.Jobs.Functions` | Function host and separate timer, HTTP and queue trigger classes |
+| `SFA.DAS.Tools.Support.Jobs.Core` | User search refresh workflow and its service registration |
+| `SFA.DAS.Tools.Support.Jobs.Infrastructure` | Configuration, interfaces, models, API client, Search repository, queue and blob lease |
+| `SFA.DAS.Tools.Support.Jobs.UnitTests` | Tests grouped by configuration, functions, services and opt-in integration tests |
+
+The Functions project references Core and Infrastructure; Core references Infrastructure. The configuration-table name, Function App resource names, function names, HTTP route, queue and Search alias are unchanged by the project separation.
 
 ## Local development
 
 Requires .NET 10 SDK, Azure Functions Core Tools v4, Azurite, access to a development Azure Search service, and a local/development profiles API.
 
-1. Copy `src/SFA.DAS.Tools.Support.Jobs/local.settings.example.json` to `local.settings.json` in the same directory and set the development endpoints. The real settings file is ignored by Git.
+1. Copy `src/SFA.DAS.Tools.Support.Jobs.Functions/local.settings.example.json` to `local.settings.json` in the same directory and set the development endpoints. The real settings file is ignored by Git.
 2. Start Azurite and the profiles API. Sign in with `az login`; `DefaultAzureCredential` is used for Search and authenticated profiles API calls.
 3. Run `dotnet test src/SFA.DAS.Tools.Support.Jobs.sln --configuration Release`.
-4. Run `func start` from `src/SFA.DAS.Tools.Support.Jobs`.
+4. Run `func start` from `src/SFA.DAS.Tools.Support.Jobs.Functions`.
 5. POST to `http://localhost:7071/api/user-search-index/refresh`. Local Core Tools does not enforce function-key authentication by default.
 
 On Windows, use a short checkout path. If the Functions packaging step exceeds Windows path limits, add `--artifacts-path "$env:TEMP/tsj-build"` to the dotnet commands.
@@ -40,7 +53,7 @@ The build installs .NET 10, runs unit tests with OpenCover coverage, scans packa
 
 Deployment stages are AT, TEST, TEST2, DEMO, PP, PROD and MO, using the same service connections and Azure DevOps environments as finance-jobs. Each depends on Build. AT uses the existing main/manual/PR condition; the other stages use the existing environment approval gates. Configure those approvals before enabling a new pipeline.
 
-Each deployment waits for competing deployments, provisions ARM resources, generates configuration version `1.0` into the `Configuration` table, assigns the Profiles API app role, then deploys the Function App package. Package path within artifact `SFA.DAS.Tools.Support.Jobs` is `SFA.DAS.Tools.Support.Jobs/SFA.DAS.Tools.Support.Jobs.zip`.
+Each deployment waits for competing deployments, provisions ARM resources, generates configuration version `1.0` into the `Configuration` table, assigns the Profiles API app role, then deploys the Function App package. Package path within artifact `SFA.DAS.Tools.Support.Jobs` is `SFA.DAS.Tools.Support.Jobs.Functions/SFA.DAS.Tools.Support.Jobs.Functions.zip`.
 
 ### Required pipeline setup
 
