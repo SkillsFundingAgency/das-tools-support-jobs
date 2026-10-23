@@ -61,7 +61,7 @@ Each deployment waits for competing deployments, provisions ARM resources, gener
 2. Create/authorize the Azure DevOps definition using this repository's `azure-pipelines.yml`; authorize GitHub, shared template repositories, service connections, the DAS GitHub App secure file, config pipeline resource and existing BUILD/RELEASE management groups. Create the SonarCloud project `SkillsFundingAgency_das-tools-support-jobs` and configure its service connection access.
 3. Create/authorize `RELEASE das-tools-support-jobs` and the AT/TEST/TEST2/DEMO/PreProd/PROD/MO `das-tools-support-jobs` groups. Keep `ServiceName=toolssupjobs` so resource names match the configured app-role suffix. Each stage also uses its matching management/shared groups, as in finance-jobs.
 4. Supply the variables below, confirm the target environment's approval gates, then run Build and deploy to AT first. Use a config artifact from master that contains the new schema/assignment.
-5. Deploy the accompanying Employer Profiles API paging change before the first refresh. Test the Azure acceptance scenarios in [docs/testing.md](docs/testing.md).
+5. Deploy the accompanying Employer Profiles API paging change before the first refresh.
 
 | Pipeline variables | Purpose |
 | --- | --- |
@@ -83,8 +83,6 @@ Application settings are under `ToolsSupportJobs` in the configuration table: `A
 The ARM template creates a Windows S1 plan, .NET 10 isolated Function App, system-assigned managed identity, Always On and VNet integration. It assigns the platform `AiSearchIndexContributor` role at the existing shared Search service scope. The shared app-role step grants the Function App the Profiles API `Default` role using `das-app-role-assignments-CDS` (DevTest) or `das-app-role-assignments-FCS` (PP/PROD/MO). The appropriate deployment identity needs permission to create the resources and assign Search access; the app-role connection needs Entra assignment permissions.
 
 Confirm routes/DNS permit Profiles API, Search, configuration storage and job storage access. Search must allow Entra/RBAC data-plane authentication. Storage uses connection strings. A successful local build does not verify these permissions or network paths.
-
-See [tester instructions](docs/testing.md) for acceptance evidence. The story remains awaiting deployment and live acceptance testing until those checks pass.
 
 ## Account search index
 
@@ -111,5 +109,3 @@ Use the supporting `das-employer-config` schema `das-tools-support-jobs/SFA.DAS.
 The deployment ARM template supplies `RefreshAccountSearchIndexSchedule`, defaulting to `0 30 2 * * *`. A pipeline variable of the same name can override the default through the existing ARM parameter-generation step. The user schedule remains separately configured.
 
 Before deployment, the Function App managed identity ending `-toolssupjobs-fa` needs `ReadAllEmployerAccountBalances` and `ReadAllAccountUsers` on the Accounts API registration ending `-accapi-as-ar`. The first permits account listing and legal-entity reads; the second permits numeric account detail reads. Retain the APPMAN-2137 Profiles API `Default` assignment on `-empprfapi-as-ar`. Apply the shared app-role assignments only after those permission changes are approved. Confirm the configured identifier points to the matching Accounts API registration and that network rules permit its endpoint. A local test does not prove deployed access.
-
-See the APPMAN-2138 section in [tester instructions](docs/testing.md) for live success, retention, failure and search checks.
