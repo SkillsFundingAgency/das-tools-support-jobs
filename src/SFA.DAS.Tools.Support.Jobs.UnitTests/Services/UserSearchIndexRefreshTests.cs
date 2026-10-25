@@ -147,14 +147,27 @@ public class UserSearchIndexRefreshTests
         Assert.That(indexes.Events, Does.Not.Contain("promote"));
     }
 
-    [Test]
-    public async Task EmptySourceCanProduceVerifiedEmptyIndex()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void EmptySourceDoesNotPromoteAnIndex(bool hasServingIndex)
     {
+        var existingUser = UserSearchDocument.From(users[0]);
+        if (hasServingIndex)
+        {
+            indexes.Seed(A);
+            indexes.Documents[A].Add(existingUser);
+        }
         users = [];
-        await Create().Run(default);
-        Assert.That(indexes.Alias, Is.EqualTo(B));
-        Assert.That(indexes.Documents[B], Is.Empty);
-        Assert.That(indexes.Events, Does.Not.Contain("upload"));
+
+        var exception = Assert.ThrowsAsync<InvalidOperationException>(() => Create().Run(default));
+
+        Assert.That(exception!.Message, Is.EqualTo("Profiles API returned no users; keeping the current index."));
+        Assert.That(indexes.Alias, Is.EqualTo(hasServingIndex ? A : null));
+        Assert.That(indexes.Documents.Keys, Is.EquivalentTo(hasServingIndex ? new[] { A } : Array.Empty<string>()));
+        if (hasServingIndex)
+            Assert.That(indexes.Documents[A], Is.EqualTo(new[] { existingUser }));
+        Assert.That(indexes.Events, Does.Not.Contain("promote"));
+        Assert.That(lease.Disposed, Is.True);
     }
 
     [Test]

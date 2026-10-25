@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using NUnit.Framework;
 using SFA.DAS.Tools.Support.Jobs.Extensions;
 using SFA.DAS.Tools.Support.Jobs.Functions;
+using SFA.DAS.Tools.Support.Jobs.Functions.Extensions;
 using SFA.DAS.Tools.Support.Jobs.Infrastructure.Extensions;
 using SFA.DAS.Tools.Support.Jobs.Infrastructure.Interfaces;
 using SFA.DAS.Tools.Support.Jobs.Infrastructure.Services;
