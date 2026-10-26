@@ -15,6 +15,8 @@
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
     <PackageReference Include="coverlet.collector" Version="10.0.1" PrivateAssets="all" />
     <PackageReference Include="coverlet.msbuild" Version="10.0.1" PrivateAssets="all" />
-    <ProjectReference Include="../SFA.DAS.Tools.Support.Jobs/SFA.DAS.Tools.Support.Jobs.csproj" />
+    <ProjectReference Include="../SFA.DAS.Tools.Support.Jobs.Functions/SFA.DAS.Tools.Support.Jobs.Functions.csproj" />
+    <ProjectReference Include="../SFA.DAS.Tools.Support.Jobs.Infrastructure/SFA.DAS.Tools.Support.Jobs.Infrastructure.csproj" />
+    <ProjectReference Include="../SFA.DAS.Tools.Support.Jobs/SFA.DAS.Tools.Support.Jobs.Core.csproj" />
   </ItemGroup>
 </Project>
