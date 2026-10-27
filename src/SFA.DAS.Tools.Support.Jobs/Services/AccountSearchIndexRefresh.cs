@@ -29,6 +29,8 @@ public sealed class AccountSearchIndexRefresh(
         try
         {
             var totalCount = await UploadAllPages(name, token);
+            if (totalCount == 0)
+                throw new InvalidOperationException("Accounts API returned no accounts; keeping the current index.");
             await Verify(name, totalCount, token);
             token.ThrowIfCancellationRequested();
             await indexes.Promote(name, previous, token);
@@ -66,13 +68,19 @@ public sealed class AccountSearchIndexRefresh(
                 (pageNumber < totalPages && page.Data.Count != options.Value.PageSize))
                 throw new InvalidOperationException($"Accounts API returned inconsistent or incomplete paging at page {pageNumber}.");
 
-            var documents = new List<AccountSearchDocument>();
             foreach (var summary in page.Data)
             {
                 token.ThrowIfCancellationRequested();
                 if (summary.AccountId <= 0 || !seen.Add(summary.AccountId))
                     throw new InvalidOperationException($"Accounts API returned a missing or duplicate account ID at page {pageNumber}.");
-                var account = await accounts.GetAccount(summary.AccountId, token);
+            }
+
+            var documents = new AccountSearchDocument[page.Data.Count];
+            await Parallel.ForEachAsync(Enumerable.Range(0, page.Data.Count),
+                new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = token }, async (index, enrichmentToken) =>
+            {
+                var summary = page.Data[index];
+                var account = await accounts.GetAccount(summary.AccountId, enrichmentToken);
                 if (account.AccountId != summary.AccountId || account.PayeSchemes is null || account.LegalEntities is null ||
                     account.PayeSchemes.Any(paye => string.IsNullOrWhiteSpace(paye.Id)))
                     throw new InvalidOperationException("Accounts API returned inconsistent account details.");
@@ -84,16 +92,16 @@ public sealed class AccountSearchIndexRefresh(
                     if (!long.TryParse(resource.Id, NumberStyles.None, CultureInfo.InvariantCulture, out var legalEntityId) || legalEntityId <= 0)
                         throw new InvalidOperationException("Accounts API returned an invalid legal entity ID.");
                     if (!legalEntityIds.Add(legalEntityId)) continue;
-                    var legalEntity = await accounts.GetLegalEntity(account.AccountId, legalEntityId, token);
+                    var legalEntity = await accounts.GetLegalEntity(account.AccountId, legalEntityId, enrichmentToken);
                     if (legalEntity.LegalEntityId != legalEntityId)
                         throw new InvalidOperationException("Accounts API returned inconsistent legal entity details.");
                     names.Add(legalEntity.Name ?? "");
                 }
-                documents.Add(AccountSearchDocument.From(account, names));
-            }
-            if (documents.Count > 0) await indexes.Upload(indexName, documents, token);
+                documents[index] = AccountSearchDocument.From(account, names);
+            });
+            if (documents.Length > 0) await indexes.Upload(indexName, documents, token);
             logger.LogInformation("Uploaded account page {PageNumber}/{TotalPages}: {PageCount} documents; {UploadedCount} total to {IndexName}",
-                pageNumber, totalPages, documents.Count, seen.Count, indexName);
+                pageNumber, totalPages, documents.Length, seen.Count, indexName);
             if (pageNumber == totalPages) return seen.Count;
         }
     }

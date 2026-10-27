@@ -32,7 +32,7 @@ public class AccountSearchIndexRefreshTests
         lease = new();
         refreshLock.Setup(x => x.Acquire(It.IsAny<CancellationToken>())).ReturnsAsync(lease);
         source = Enumerable.Range(1, 3).Select(i => new AccountSummary(i)).ToArray();
-        accounts.Setup(x => x.GetAccounts(It.IsAny<int>(), 2, It.IsAny<CancellationToken>()))
+        accounts.Setup(x => x.GetAccounts(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int page, int size, CancellationToken _) => new AccountsPage(source.Skip((page - 1) * size).Take(size).ToList(), page, source.Length / size + 1));
         accounts.Setup(x => x.GetAccount(It.IsAny<long>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((long id, CancellationToken _) => Detail(id));
@@ -41,8 +41,8 @@ public class AccountSearchIndexRefreshTests
     }
 
     private static AccountDetail Detail(long id) => new(id, $"ABC{id}", $"Account {id}", [new("123/AB456")], [new("10")]);
-    private AccountSearchIndexRefresh Create(int attempts = 1) => new(accounts.Object, indexes, refreshLock.Object,
-        Options.Create(new JobsOptions { PageSize = 2, VerificationAttempts = attempts, VerificationDelaySeconds = 0 }),
+    private AccountSearchIndexRefresh Create(int attempts = 1, int pageSize = 2) => new(accounts.Object, indexes, refreshLock.Object,
+        Options.Create(new JobsOptions { PageSize = pageSize, VerificationAttempts = attempts, VerificationDelaySeconds = 0 }),
         clock, NullLogger<AccountSearchIndexRefresh>.Instance);
 
     [Test]
@@ -73,14 +73,122 @@ public class AccountSearchIndexRefreshTests
         Assert.That(indexes.Alias, Is.EqualTo(B));
     }
 
-    [Test]
-    public async Task EmptySourceCreatesAVerifiedEmptyIndex()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void EmptySourceDoesNotPromoteAnIndex(bool hasServingIndex)
     {
+        var existingAccount = AccountSearchDocument.From(Detail(1), ["Existing legal entity"]);
+        if (hasServingIndex)
+        {
+            indexes.Seed(A);
+            indexes.Documents[A].Add(existingAccount);
+        }
         source = [];
-        await Create().Run(default);
+
+        var exception = Assert.ThrowsAsync<InvalidOperationException>(() => Create().Run(default));
+
+        Assert.That(exception!.Message, Is.EqualTo("Accounts API returned no accounts; keeping the current index."));
+        Assert.That(indexes.Alias, Is.EqualTo(hasServingIndex ? A : null));
+        Assert.That(indexes.Documents.Keys, Is.EquivalentTo(hasServingIndex ? new[] { A } : Array.Empty<string>()));
+        if (hasServingIndex)
+            Assert.That(indexes.Documents[A], Is.EqualTo(new[] { existingAccount }));
+        Assert.That(indexes.Events, Does.Not.Contain("promote"));
+        Assert.That(lease.Disposed, Is.True);
+    }
+
+    [Test]
+    public async Task EnrichesAccountsConcurrentlyWithinTheLimitBeforeUploadingThePage()
+    {
+        source = Enumerable.Range(1, 12).Select(id => new AccountSummary(id)).ToArray();
+        var batchStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var active = 0;
+        var maximumActive = 0;
+        var sync = new object();
+        accounts.Setup(x => x.GetAccount(It.IsAny<long>(), It.IsAny<CancellationToken>()))
+            .Returns(async (long id, CancellationToken token) =>
+            {
+                var current = Interlocked.Increment(ref active);
+                lock (sync) maximumActive = Math.Max(maximumActive, current);
+                if (current == 5) batchStarted.TrySetResult();
+                try
+                {
+                    await release.Task.WaitAsync(token);
+                    return Detail(id);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref active);
+                }
+            });
+
+        var refresh = Create(pageSize: 12).Run(default);
+        try
+        {
+            await batchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(Volatile.Read(ref active), Is.EqualTo(5));
+            Assert.That(indexes.Events, Does.Not.Contain("upload"));
+            accounts.Verify(x => x.GetAccounts(2, 12, It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await refresh;
+        }
+
+        Assert.That(maximumActive, Is.EqualTo(5));
+        Assert.That(indexes.Documents[B].Select(document => document.AccountId), Is.EqualTo(source.Select(account => account.AccountId)));
+        Assert.That(indexes.Documents[B].Select(document => document.AccountName), Is.EqualTo(source.Select(account => $"Account {account.AccountId}")));
         Assert.That(indexes.Alias, Is.EqualTo(B));
-        Assert.That(indexes.Documents[B], Is.Empty);
-        Assert.That(indexes.Events, Is.EqualTo(new[] { "create", "count", "promote" }));
+        Assert.That(lease.Disposed, Is.True);
+    }
+
+    [Test]
+    public async Task EnrichmentFailureCancelsOtherAccountsAndKeepsTheServingIndex()
+    {
+        indexes.Seed(A);
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var siblingCancelled = false;
+        accounts.Setup(x => x.GetAccount(1, It.IsAny<CancellationToken>()))
+            .Returns(async (long id, CancellationToken token) =>
+            {
+                firstStarted.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                    return Detail(id);
+                }
+                finally
+                {
+                    siblingCancelled = token.IsCancellationRequested;
+                }
+            });
+        accounts.Setup(x => x.GetAccount(2, It.IsAny<CancellationToken>()))
+            .Returns(async (long _, CancellationToken token) =>
+            {
+                await firstStarted.Task.WaitAsync(token);
+                throw new HttpRequestException("Account detail request failed.");
+            });
+
+        var refresh = Create().Run(default);
+        try
+        {
+            Assert.ThrowsAsync<HttpRequestException>(() => refresh.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.That(siblingCancelled, Is.True);
+            Assert.That(lease.Disposed, Is.True);
+        }
+        finally
+        {
+            lease.Cancellation.Cancel();
+            try { await refresh; }
+            catch (HttpRequestException) { }
+            catch (OperationCanceledException) { }
+        }
+
+        Assert.That(indexes.Alias, Is.EqualTo(A));
+        Assert.That(indexes.Documents.Keys, Is.EquivalentTo(new[] { A }));
+        Assert.That(indexes.Events, Does.Not.Contain("upload"));
+        Assert.That(indexes.Events, Does.Not.Contain("promote"));
     }
 
     [Test]

@@ -1,6 +1,8 @@
+using System.Net;
 using Azure.Storage.Queues;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using NUnit.Framework;
 using SFA.DAS.Tools.Support.Jobs.Extensions;
@@ -27,17 +29,113 @@ public class AccountConfigurationTests
         ["ToolsSupportJobs:EmployerAccountsApiIdentifierUri"] = "https://accounts.example"
     };
 
-    private static ServiceProvider Provider(Dictionary<string, string?> settings)
+    private static ServiceProvider Provider(Dictionary<string, string?> settings, Action<IServiceCollection>? configure = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
-        return new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IConfiguration>(configuration)
             .AddLogging()
             .AddDasLogging()
             .AddConfigurationOptions(configuration)
             .AddServiceRegistration(configuration)
-            .AddRefreshServices()
-            .BuildServiceProvider();
+            .AddRefreshServices();
+        configure?.Invoke(services);
+        return services.BuildServiceProvider();
+    }
+
+    private static ServiceProvider AccountProvider(Func<HttpRequestMessage, HttpResponseMessage> respond)
+    {
+        var settings = Settings();
+        settings["EnvironmentName"] = "LOCAL";
+        settings["ToolsSupportJobs:EmployerAccountsApiIdentifierUri"] = "";
+        settings["ToolsSupportJobs:EmployerProfilesApiIdentifierUri"] = "";
+        return Provider(settings, services =>
+        {
+            services.ConfigureHttpClientDefaults(builder => builder.ConfigurePrimaryHttpMessageHandler(() => new Handler(respond)));
+            services.ConfigureAll<HttpStandardResilienceOptions>(options =>
+            {
+                options.Retry.Delay = TimeSpan.Zero;
+                options.Retry.UseJitter = false;
+            });
+        });
+    }
+
+    [TestCase(408)]
+    [TestCase(429)]
+    [TestCase(503)]
+    public async Task AccountsClientRetriesTransientResponses(int status)
+    {
+        var attempts = 0;
+        await using var provider = AccountProvider(_ => AccountResponse(
+            Interlocked.Increment(ref attempts) == 1 ? (HttpStatusCode)status : HttpStatusCode.OK));
+
+        var account = await provider.GetRequiredService<IEmployerAccountsClient>().GetAccount(1, default);
+
+        Assert.That(account.AccountId, Is.EqualTo(1));
+        Assert.That(attempts, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task AccountsClientRetriesTransientConnectionFailures()
+    {
+        var attempts = 0;
+        await using var provider = AccountProvider(_ =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1) throw new HttpRequestException("Temporary connection failure.");
+            return AccountResponse(HttpStatusCode.OK);
+        });
+
+        var account = await provider.GetRequiredService<IEmployerAccountsClient>().GetAccount(1, default);
+
+        Assert.That(account.AccountId, Is.EqualTo(1));
+        Assert.That(attempts, Is.EqualTo(2));
+    }
+
+    [TestCase(400)]
+    [TestCase(401)]
+    [TestCase(404)]
+    public async Task AccountsClientDoesNotRetryPermanentFailures(int status)
+    {
+        var attempts = 0;
+        await using var provider = AccountProvider(_ =>
+        {
+            Interlocked.Increment(ref attempts);
+            return AccountResponse((HttpStatusCode)status);
+        });
+
+        Assert.ThrowsAsync<HttpRequestException>(() => provider.GetRequiredService<IEmployerAccountsClient>().GetAccount(1, default));
+
+        Assert.That(attempts, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task AccountsClientPropagatesFailureAfterRetriesAreExhausted()
+    {
+        var attempts = 0;
+        await using var provider = AccountProvider(_ =>
+        {
+            Interlocked.Increment(ref attempts);
+            return AccountResponse(HttpStatusCode.ServiceUnavailable);
+        });
+
+        Assert.ThrowsAsync<HttpRequestException>(() => provider.GetRequiredService<IEmployerAccountsClient>().GetAccount(1, default));
+
+        Assert.That(attempts, Is.EqualTo(4));
+    }
+
+    [Test]
+    public async Task AccountsResilienceDoesNotChangeTheProfilesClient()
+    {
+        var attempts = 0;
+        await using var provider = AccountProvider(_ =>
+        {
+            Interlocked.Increment(ref attempts);
+            return AccountResponse(HttpStatusCode.ServiceUnavailable);
+        });
+
+        Assert.ThrowsAsync<HttpRequestException>(() => provider.GetRequiredService<IEmployerProfilesClient>().GetUsers(1, 1000, default));
+
+        Assert.That(attempts, Is.EqualTo(1));
     }
 
     [Test]
@@ -78,5 +176,16 @@ public class AccountConfigurationTests
         settings["ToolsSupportJobs:EmployerAccountsApiIdentifierUri"] = "";
         await using var provider = Provider(settings);
         Assert.DoesNotThrow(() => _ = provider.GetRequiredService<IAccountSearchIndexRefresh>());
+    }
+
+    private static HttpResponseMessage AccountResponse(HttpStatusCode status) => new(status)
+    {
+        Content = new StringContent("""{"accountId":1,"publicHashedAccountId":"ABC1","dasAccountName":"Account 1","payeSchemes":[],"legalEntities":[]}""")
+    };
+
+    private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(respond(request));
     }
 }

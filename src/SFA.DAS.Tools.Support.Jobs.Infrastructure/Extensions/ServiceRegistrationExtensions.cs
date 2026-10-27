@@ -51,7 +51,7 @@ public static class ServiceRegistrationExtensions
             var accountOptions = sp.GetRequiredService<IOptionsMonitor<JobsOptions>>().Get(AccountSearchIndexRepository.AliasName);
             client.BaseAddress = new Uri(accountOptions.EmployerAccountsApiBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(100);
-        });
+        }).AddStandardResilienceHandler();
         return services;
     }
 }
