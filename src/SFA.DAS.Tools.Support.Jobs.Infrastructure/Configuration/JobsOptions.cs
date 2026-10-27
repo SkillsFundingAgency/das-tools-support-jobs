@@ -6,6 +6,8 @@ public sealed class JobsOptions
     public string AzureSearchBaseUrl { get; set; } = "";
     public string EmployerProfilesApiBaseUrl { get; set; } = "";
     public string EmployerProfilesApiIdentifierUri { get; set; } = "";
+    public string EmployerAccountsApiBaseUrl { get; set; } = "";
+    public string EmployerAccountsApiIdentifierUri { get; set; } = "";
     public int PageSize { get; set; } = 1000;
     public int VerificationAttempts { get; set; } = 12;
     public int VerificationDelaySeconds { get; set; } = 5;

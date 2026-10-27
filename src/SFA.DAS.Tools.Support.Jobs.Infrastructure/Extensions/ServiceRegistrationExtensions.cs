@@ -7,6 +7,7 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SFA.DAS.Tools.Support.Jobs.Infrastructure.Configuration;
 using SFA.DAS.Tools.Support.Jobs.Infrastructure.Interfaces;
@@ -36,6 +37,24 @@ public static class ServiceRegistrationExtensions
         {
             client.BaseAddress = new Uri(sp.GetRequiredService<IOptions<JobsOptions>>().Value.EmployerProfilesApiBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(100);
+        });
+        services.AddKeyedSingleton<QueueClient>(AccountSearchIndexRepository.AliasName, (_, _) =>
+            new QueueClient(storage, RefreshRequestQueue.AccountQueueName, new QueueClientOptions { MessageEncoding = QueueMessageEncoding.Base64 }));
+        services.AddKeyedSingleton<IRefreshRequestQueue>(AccountSearchIndexRepository.AliasName, (sp, _) =>
+            new RefreshRequestQueue(sp.GetRequiredKeyedService<QueueClient>(AccountSearchIndexRepository.AliasName)));
+        services.AddKeyedSingleton<IRefreshLock>(AccountSearchIndexRepository.AliasName, (sp, _) =>
+            new BlobRefreshLock(sp.GetRequiredService<BlobContainerClient>(), sp.GetRequiredService<ILogger<BlobRefreshLock>>(),
+                sp.GetRequiredService<TimeProvider>(), "account-search-index-refresh"));
+        services.AddSingleton<IAccountSearchIndexRepository, AccountSearchIndexRepository>();
+        services.AddHttpClient<IEmployerAccountsClient, EmployerAccountsClient>((sp, client) =>
+        {
+            var accountOptions = sp.GetRequiredService<IOptionsMonitor<JobsOptions>>().Get(AccountSearchIndexRepository.AliasName);
+            client.BaseAddress = new Uri(accountOptions.EmployerAccountsApiBaseUrl.TrimEnd('/') + "/");
+        }).AddStandardResilienceHandler(options =>
+        {
+            options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(100);
+            options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(8);
+            options.CircuitBreaker.SamplingDuration = options.AttemptTimeout.Timeout * 2;
         });
         return services;
     }

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SFA.DAS.Tools.Support.Jobs.Infrastructure.Configuration;
+using SFA.DAS.Tools.Support.Jobs.Infrastructure.Services;
 
 namespace SFA.DAS.Tools.Support.Jobs.Infrastructure.Extensions;
 
@@ -18,6 +19,11 @@ public static class AddConfigurationOptionsExtension
             .Validate(o => o.VerificationAttempts is >= 1 and <= 120 && o.VerificationDelaySeconds is >= 1 and <= 60,
                 "VerificationAttempts and VerificationDelaySeconds must be within supported bounds.")
             .ValidateOnStart();
+        services.AddOptions<JobsOptions>(AccountSearchIndexRepository.AliasName).Bind(configuration.GetSection(JobsOptions.SectionName))
+            .Validate(o => Uri.TryCreate(o.EmployerAccountsApiBaseUrl, UriKind.Absolute, out var uri) &&
+                (uri.Scheme == "https" || (uri.IsLoopback && uri.Scheme == "http")), "EmployerAccountsApiBaseUrl must be HTTPS or loopback HTTP.")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.EmployerAccountsApiIdentifierUri) ||
+                configuration["EnvironmentName"] is "LOCAL" or "DEV", "EmployerAccountsApiIdentifierUri is required outside LOCAL/DEV.");
         return services;
     }
 }
