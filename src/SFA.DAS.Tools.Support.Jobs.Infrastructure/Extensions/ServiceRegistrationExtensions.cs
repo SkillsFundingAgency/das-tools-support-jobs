@@ -50,8 +50,12 @@ public static class ServiceRegistrationExtensions
         {
             var accountOptions = sp.GetRequiredService<IOptionsMonitor<JobsOptions>>().Get(AccountSearchIndexRepository.AliasName);
             client.BaseAddress = new Uri(accountOptions.EmployerAccountsApiBaseUrl.TrimEnd('/') + "/");
-            client.Timeout = TimeSpan.FromSeconds(100);
-        }).AddStandardResilienceHandler();
+        }).AddStandardResilienceHandler(options =>
+        {
+            options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(100);
+            options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(8);
+            options.CircuitBreaker.SamplingDuration = options.AttemptTimeout.Timeout * 2;
+        });
         return services;
     }
 }

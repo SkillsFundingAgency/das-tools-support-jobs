@@ -1,10 +1,13 @@
 using System.Net;
+using System.Net.Http.Headers;
 using Azure.Storage.Queues;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using NUnit.Framework;
+using Polly.Timeout;
 using SFA.DAS.Tools.Support.Jobs.Extensions;
 using SFA.DAS.Tools.Support.Jobs.Functions;
 using SFA.DAS.Tools.Support.Jobs.Functions.Extensions;
@@ -43,7 +46,11 @@ public class AccountConfigurationTests
         return services.BuildServiceProvider();
     }
 
-    private static ServiceProvider AccountProvider(Func<HttpRequestMessage, HttpResponseMessage> respond)
+    private static ServiceProvider AccountProvider(Func<HttpRequestMessage, HttpResponseMessage> respond) =>
+        AccountProvider((request, _) => Task.FromResult(respond(request)));
+
+    private static ServiceProvider AccountProvider(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond,
+        TimeProvider? timeProvider = null)
     {
         var settings = Settings();
         settings["EnvironmentName"] = "LOCAL";
@@ -51,6 +58,7 @@ public class AccountConfigurationTests
         settings["ToolsSupportJobs:EmployerProfilesApiIdentifierUri"] = "";
         return Provider(settings, services =>
         {
+            if (timeProvider is not null) services.AddSingleton(timeProvider);
             services.ConfigureHttpClientDefaults(builder => builder.ConfigurePrimaryHttpMessageHandler(() => new Handler(respond)));
             services.ConfigureAll<HttpStandardResilienceOptions>(options =>
             {
@@ -58,6 +66,100 @@ public class AccountConfigurationTests
                 options.Retry.UseJitter = false;
             });
         });
+    }
+
+    [Test]
+    public async Task PagedAccountsRequestCanCompleteAfterNinetySeconds()
+    {
+        var timeProvider = new FakeTimeProvider();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var provider = AccountProvider(async (request, token) =>
+        {
+            Assert.That(request.RequestUri!.PathAndQuery, Is.EqualTo("/api/accounts?pageSize=1000&pageNumber=1"));
+            var delay = Task.Delay(TimeSpan.FromSeconds(90), timeProvider, token);
+            started.TrySetResult();
+            await delay;
+            return AccountsPageResponse();
+        }, timeProvider);
+
+        var response = provider.GetRequiredService<IEmployerAccountsClient>().GetAccounts(1, 1000, default);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        timeProvider.Advance(TimeSpan.FromSeconds(90));
+        var page = await response.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.That(page.Data!.Single().AccountId, Is.EqualTo(1));
+        Assert.That(page.Page, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task PagedAccountsRequestRetriesAfterTheAttemptTimeout()
+    {
+        var timeProvider = new FakeTimeProvider();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        using var cancellation = new CancellationTokenSource();
+        await using var provider = AccountProvider(async (_, token) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                var pending = Task.Delay(Timeout.InfiniteTimeSpan, token);
+                started.TrySetResult();
+                await pending;
+            }
+            return AccountsPageResponse();
+        }, timeProvider);
+
+        var response = provider.GetRequiredService<IEmployerAccountsClient>().GetAccounts(1, 1000, cancellation.Token);
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            timeProvider.Advance(TimeSpan.FromSeconds(100));
+            var page = await response.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.That(page.Data!.Single().AccountId, Is.EqualTo(1));
+            Assert.That(attempts, Is.EqualTo(2));
+        }
+        finally
+        {
+            cancellation.Cancel();
+        }
+    }
+
+    [Test]
+    public async Task AccountsRequestCannotRetryBeyondTheTotalTimeout()
+    {
+        var timeProvider = new FakeTimeProvider();
+        var attempts = 0;
+        using var cancellation = new CancellationTokenSource();
+        await using var provider = AccountProvider((_, _) =>
+        {
+            Interlocked.Increment(ref attempts);
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromMinutes(10));
+            return Task.FromResult(response);
+        }, timeProvider);
+
+        var response = provider.GetRequiredService<IEmployerAccountsClient>().GetAccounts(1, 1000, cancellation.Token);
+        try
+        {
+            timeProvider.Advance(TimeSpan.FromMinutes(8));
+
+            Assert.ThrowsAsync<TimeoutRejectedException>(() => response.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.That(attempts, Is.EqualTo(1));
+        }
+        finally
+        {
+            cancellation.Cancel();
+        }
+    }
+
+    [Test]
+    public async Task AccountsClientLeavesTimeoutControlToTheResilienceHandler()
+    {
+        await using var provider = AccountProvider(_ => AccountResponse(HttpStatusCode.OK));
+        using var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(IEmployerAccountsClient));
+
+        Assert.That(client.Timeout, Is.EqualTo(Timeout.InfiniteTimeSpan));
     }
 
     [TestCase(408)]
@@ -183,9 +285,14 @@ public class AccountConfigurationTests
         Content = new StringContent("""{"accountId":1,"publicHashedAccountId":"ABC1","dasAccountName":"Account 1","payeSchemes":[],"legalEntities":[]}""")
     };
 
-    private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    private static HttpResponseMessage AccountsPageResponse() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("""{"data":[{"accountId":1}],"page":1,"totalPages":1}""")
+    };
+
+    private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(respond(request));
+            respond(request, cancellationToken);
     }
 }
