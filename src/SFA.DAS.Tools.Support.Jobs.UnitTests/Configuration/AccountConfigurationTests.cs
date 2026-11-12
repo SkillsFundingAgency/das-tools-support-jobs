@@ -1,11 +1,14 @@
 using System.Net;
 using System.Net.Http.Headers;
+using Azure.Core;
 using Azure.Storage.Queues;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using Moq;
 using NUnit.Framework;
 using Polly.Timeout;
 using SFA.DAS.Tools.Support.Jobs.Extensions;
@@ -41,6 +44,7 @@ public class AccountConfigurationTests
             .AddDasLogging()
             .AddConfigurationOptions(configuration)
             .AddServiceRegistration(configuration)
+            .Replace(ServiceDescriptor.Singleton<TokenCredential>(Mock.Of<TokenCredential>()))
             .AddRefreshServices();
         configure?.Invoke(services);
         return services.BuildServiceProvider();

@@ -1,11 +1,14 @@
 using Azure.Core;
+using Azure.Identity;
 using Azure.Search.Documents.Indexes;
 using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Moq;
 using NUnit.Framework;
 using SFA.DAS.Tools.Support.Jobs.Extensions;
 using SFA.DAS.Tools.Support.Jobs.Infrastructure.Configuration;
@@ -32,13 +35,18 @@ public class ConfigurationTests
     private static ServiceProvider Provider(Dictionary<string, string?> settings)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
-        return new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IConfiguration>(configuration)
             .AddLogging()
             .AddDasLogging()
             .AddConfigurationOptions(configuration)
             .AddServiceRegistration(configuration)
-            .AddRefreshServices()
+            .AddRefreshServices();
+
+        Assert.That(services.Single(service => service.ServiceType == typeof(TokenCredential)).ImplementationType,
+            Is.EqualTo(typeof(DefaultAzureCredential)));
+
+        return services.Replace(ServiceDescriptor.Singleton<TokenCredential>(Mock.Of<TokenCredential>()))
             .BuildServiceProvider();
     }
 
@@ -47,7 +55,6 @@ public class ConfigurationTests
     {
         await using var provider = Provider(Settings());
         Assert.That(provider.GetRequiredService<IOptions<JobsOptions>>().Value.PageSize, Is.EqualTo(1000));
-        Assert.That(provider.GetRequiredService<TokenCredential>(), Is.Not.Null);
         Assert.That(provider.GetRequiredService<SearchIndexClient>().Endpoint.Host, Is.EqualTo("test.search.windows.net"));
         Assert.That(provider.GetRequiredService<BlobContainerClient>().Name, Is.EqualTo("tools-support-jobs-locks"));
         Assert.That(provider.GetRequiredService<QueueClient>().Name, Is.EqualTo(RefreshRequestQueue.Name));
